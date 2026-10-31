@@ -1,0 +1,2 @@
+eider-profiler: tests/fixtures/future.prof: profile format 2 (this eider-profiler reads 1)
+exit 2

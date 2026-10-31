@@ -1,0 +1,216 @@
+// eider-loadgen: a small HTTP load generator, for profiling services under load.
+//
+//   eider-loadgen --port P [--host 127.0.0.1] [--threads 8] [--seconds 5 | --requests N]
+//                 [--keys 1000] --req "METHOD PATH [BODY]" [--req ...]
+//
+// Each thread keeps one connection (packages/http's client, keep-alive; it reconnects after
+// an error) and sends the requests in turn until the time or the request count is up. In a
+// PATH or BODY, `{n}` is the request number modulo --keys and `{t}` the thread number, so a
+// mix can write and read a working set of keys. At the end it prints one line:
+// requests, errors, non-2xx answers, throughput and latency percentiles.
+
+import "core/sys"
+import "std/bytes"
+import "std/env"
+import "std/io"
+import "std/net"
+import "std/sort"
+import "std/time"
+import "http"
+import "http/client"
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
+
+type Req = { method: List[u8], path: List[u8], body: List[u8] }
+type Conf = { host: List[u8], port: i32, threads: i64, seconds: i64, requests: i64, keys: i64, reqs: List[Req] }
+/// what one thread did: requests, transport errors, answers outside 2xx, latencies (us)
+type Done = { n: i64, errors: i64, bad: i64, lat: List[i64] }
+
+fn die(msg: str) uses io {
+    io.errln(s(msg))
+    env.exit(2)
+}
+
+fn num(v: List[u8]) -> i64 uses io {
+    match bytes.parse_u64(v) {
+        Some(n) => n as i64
+        None => {
+            die("eider-loadgen: a number was expected")
+            0
+        }
+    }
+}
+
+fn parse_req(t: List[u8]) -> Req uses io {
+    let parts = bytes.split(t, 32)
+    if parts.len() < 2 { die("eider-loadgen: --req \"METHOD PATH [BODY]\"") }
+    let mut body: List[u8] = List.new()
+    if parts.len() > 2 {
+        let mut rest: List[List[u8]] = List.new()
+        for i in 2..parts.len() { rest.push(parts[i]) }
+        body = bytes.join(rest, s(" "))
+    }
+    Req(parts[0], parts[1], body)
+}
+
+fn conf() -> Conf uses io {
+    let a = env.args()
+    let mut c = Conf(s("127.0.0.1"), 0, 8, 5, 0, 1000, List.new())
+    let mut i: usize = 1
+    while i < a.len() {
+        let x = a[i]
+        if is(x, "--help") || is(x, "-h") {
+            io.outln(s("eider-loadgen --port P [--host H] [--threads N] [--seconds S | --requests N] [--keys K] --req \"METHOD PATH [BODY]\"..."))
+            env.exit(0)
+        }
+        if i + 1 >= a.len() { die("eider-loadgen: every option takes a value; see --help") }
+        let v = a[i + 1]
+        if is(x, "--host") {
+            c.host = v
+        } else if is(x, "--port") {
+            c.port = num(v) as i32
+        } else if is(x, "--threads") {
+            c.threads = num(v)
+        } else if is(x, "--seconds") {
+            c.seconds = num(v)
+        } else if is(x, "--requests") {
+            c.requests = num(v)
+        } else if is(x, "--keys") {
+            c.keys = num(v)
+        } else if is(x, "--req") {
+            c.reqs.push(parse_req(v))
+        } else {
+            die("eider-loadgen: unknown option; see --help")
+        }
+        i += 2
+    }
+    if c.port <= 0 || c.reqs.len() == 0 { die("eider-loadgen: needs --port and at least one --req; see --help") }
+    if c.keys < 1 { c.keys = 1 }
+    c
+}
+
+/// `t` with `{n}` and `{t}` replaced.
+fn fill(t: List[u8], n: i64, th: i64) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < t.len() {
+        if i + 2 < t.len() && t[i] == 123 && t[i + 2] == 125 && (t[i + 1] == 110 || t[i + 1] == 116) {
+            let v = if t[i + 1] == 110 { n } else { th }
+            bytes.append(inout out, bytes.from_i64(v))
+            i += 3
+        } else {
+            out.push(t[i])
+            i += 1
+        }
+    }
+    out
+}
+
+fn worker(c: Conf, addr: net.Addr, th: i64, quota: i64) -> Done uses net, io, clock {
+    let mut d = Done(0, 0, 0, List.new())
+    let end = time.after(time.seconds(c.seconds))
+    let mut conn: Option[client.Conn] = None
+    let mut k: i64 = 0
+    while (quota > 0 && d.n < quota) || (quota == 0 && !end.expired()) {
+        if conn.is_none() {
+            match client.connect(addr, time.after(time.seconds(5))) {
+                Ok(x) => { conn = Some(x) }
+                Err(_) => {
+                    d.errors += 1
+                    d.n += 1
+                    time.sleep_ms(10)
+                    continue
+                }
+            }
+        }
+        let rq = c.reqs[(k % (c.reqs.len() as i64)) as usize]
+        let key = (k * 7919 + th * 104729) % c.keys
+        let mut r = http.request("GET", fill(rq.path, key, th))
+        r.method = rq.method
+        if rq.body.len() > 0 {
+            r.set_header("Content-Type", s("application/json"))
+            r.body = fill(rq.body, key, th)
+        }
+        let t0 = time.mono_ns()
+        let mut cc = conn.unwrap()
+        match cc.request(r, time.after(time.seconds(10))) {
+            Ok(resp) => {
+                d.lat.push((time.mono_ns() - t0) / 1000)
+                if resp.status < 200 || resp.status > 299 { d.bad += 1 }
+                if resp.keep_alive { conn = Some(cc) } else {
+                    cc.close()
+                    conn = None
+                }
+            }
+            Err(_) => {
+                d.errors += 1
+                cc.close()
+                conn = None
+            }
+        }
+        d.n += 1
+        k += 1
+    }
+    match conn {
+        Some(x) => {
+            let mut y = x.copy()
+            y.close()
+        }
+        None => {}
+    }
+    d
+}
+
+fn pctl(xs: List[i64], p: i64) -> i64 {
+    if xs.len() == 0 { return 0 }
+    let i = ((xs.len() as i64 - 1) * p / 100) as usize
+    xs[i]
+}
+
+fn main() uses io, net, clock, threads {
+    let c = conf()
+    let addr = match net.parse(c.host, c.port) {
+        Ok(a) => a
+        Err(e) => {
+            io.errln(e.bytes())
+            env.exit(2)
+            return
+        }
+    }
+    let quota: i64 = if c.requests > 0 { (c.requests + c.threads - 1) / c.threads } else { 0 }
+    let t0 = time.mono_ns()
+    let mut ts: List[Task[Done]] = List.new()
+    for th in 0..c.threads {
+        let cc = c.copy()
+        ts.push(spawn(|| -> Done { worker(cc, addr, th, quota) }))
+    }
+    let mut all = Done(0, 0, 0, List.new())
+    for t in ts {
+        let d = t.join()
+        all.n += d.n
+        all.errors += d.errors
+        all.bad += d.bad
+        for x in d.lat { all.lat.push(x) }
+    }
+    let el = (time.mono_ns() - t0) / 1000000
+    let lat = sort.sort(all.lat)
+    let mut o = s("requests ")
+    bytes.append(inout o, bytes.from_i64(all.n))
+    bytes.append(inout o, s(" errors "))
+    bytes.append(inout o, bytes.from_i64(all.errors))
+    bytes.append(inout o, s(" non-2xx "))
+    bytes.append(inout o, bytes.from_i64(all.bad))
+    bytes.append(inout o, s(" in "))
+    bytes.append(inout o, bytes.from_i64(el))
+    bytes.append(inout o, s(" ms ("))
+    let rps: i64 = if el > 0 { all.n * 1000 / el } else { 0 }
+    bytes.append(inout o, bytes.from_i64(rps))
+    bytes.append(inout o, s(" req/s) latency us p50 "))
+    bytes.append(inout o, bytes.from_i64(pctl(lat, 50)))
+    bytes.append(inout o, s(" p90 "))
+    bytes.append(inout o, bytes.from_i64(pctl(lat, 90)))
+    bytes.append(inout o, s(" p99 "))
+    bytes.append(inout o, bytes.from_i64(pctl(lat, 99)))
+    io.outln(o)
+}

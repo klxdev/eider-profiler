@@ -1,0 +1,17 @@
+[package]
+name = "eider_profiler"
+version = "0.1.0"
+# the Eider toolchain this release goes with: same major.minor (scripts/build.sh checks it)
+eider = "0.1"
+main = "main.ei"
+description = "eider-profiler: reports, flame graphs, folded stacks and diffs of Eider programs' profiles, written in Eider"
+
+# Grants are what each package's code uses, as the compiler reports it (`eiderc caps`) and
+# checks when it builds (E0204): json uses nothing, so it is granted nothing.
+[deps.json]
+path = "../eider-lang/packages/json"
+
+# the load generator (loadgen.ei) is an HTTP client: sockets, deadlines, worker threads
+[deps.http]
+path = "../eider-lang/packages/http"
+uses = ["net", "io", "clock", "threads"]

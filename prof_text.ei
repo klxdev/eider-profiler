@@ -1,0 +1,202 @@
+// prof_text: numbers and tables as text.
+
+import "core/sys"
+import "std/bytes"
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+/// `n / d` as a percentage with one decimal ("12.3%"); "-" when d is 0.
+pub fn pct(n: i64, d: i64) -> List[u8] {
+    if d <= 0 { return s("-") }
+    let mut out: List[u8] = List.new()
+    let mut v = n.copy()
+    if v < 0 {
+        out.push(45)
+        v = 0 - v
+    }
+    let t = (v * 1000 + d / 2) / d
+    bytes.append(inout out, bytes.from_i64(t / 10))
+    out.push(46)
+    out.push((48 + (t % 10)) as u8)
+    out.push(37)
+    out
+}
+
+/// `v / 10^k` with one decimal (v >= 0).
+fn tenths(v: i64, unit: i64) -> List[u8] {
+    let t = (v * 10 + unit / 2) / unit
+    let mut out = bytes.from_i64(t / 10)
+    out.push(46)
+    out.push((48 + (t % 10)) as u8)
+    out
+}
+
+/// Bytes as `512 B`, `12.5 KiB`, `3.0 MiB`, `1.2 GiB`.
+pub fn size(b: i64) -> List[u8] {
+    let mut v = b.copy()
+    let mut neg = false
+    if v < 0 {
+        neg = true
+        v = 0 - v
+    }
+    let mut out: List[u8] = List.new()
+    if neg { out.push(45) }
+    if v < 1024 {
+        bytes.append(inout out, bytes.from_i64(v))
+        bytes.append(inout out, s(" B"))
+    } else if v < 1048576 {
+        bytes.append(inout out, tenths(v, 1024))
+        bytes.append(inout out, s(" KiB"))
+    } else if v < 1073741824 {
+        bytes.append(inout out, tenths(v, 1048576))
+        bytes.append(inout out, s(" MiB"))
+    } else {
+        bytes.append(inout out, tenths(v, 1073741824))
+        bytes.append(inout out, s(" GiB"))
+    }
+    out
+}
+
+/// Nanoseconds as `850 ns`, `12.3 us`, `4.5 ms`, `2.0 s`.
+pub fn dur(ns: i64) -> List[u8] {
+    let mut v = ns.copy()
+    if v < 0 { v = 0 }
+    let mut out: List[u8] = List.new()
+    if v < 1000 {
+        bytes.append(inout out, bytes.from_i64(v))
+        bytes.append(inout out, s(" ns"))
+    } else if v < 1000000 {
+        bytes.append(inout out, tenths(v, 1000))
+        bytes.append(inout out, s(" us"))
+    } else if v < 1000000000 {
+        bytes.append(inout out, tenths(v, 1000000))
+        bytes.append(inout out, s(" ms"))
+    } else {
+        bytes.append(inout out, tenths(v, 1000000000))
+        bytes.append(inout out, s(" s"))
+    }
+    out
+}
+
+pub fn num(n: i64) -> List[u8] { bytes.from_i64(n) }
+
+/// The number of characters of UTF-8 text `t` (its non-continuation bytes).
+fn width(t: List[u8]) -> usize {
+    let mut w: usize = 0
+    for b in t {
+        if b < 128 || b >= 192 { w += 1 }
+    }
+    w
+}
+
+/// A table: a header row, then rows; columns whose header starts with `>` are right-aligned
+/// (the `>` is not shown). Two spaces between columns; the last column isn't padded.
+pub type Table = { head: List[List[u8]], right: List[bool], rows: List[List[List[u8]]] }
+
+/// `cols` is the headers separated by `|`.
+pub fn table(cols: str) -> Table { table_of(s(cols)) }
+
+/// `table` for headers that are bytes.
+pub fn table_of(cols: List[u8]) -> Table {
+    let mut h: List[List[u8]] = List.new()
+    let mut r: List[bool] = List.new()
+    for t in bytes.split(cols, 124) {
+        if t.len() > 0 && t[0] == 62 {
+            h.push(bytes.slice(t, 1, t.len()))
+            r.push(true)
+        } else {
+            h.push(t)
+            r.push(false)
+        }
+    }
+    Table(h, r, List.new())
+}
+
+pub fn render(t: Table) -> List[u8] {
+    let n = t.head.len()
+    let mut w: List[usize] = List.new()
+    for i in 0..n { w.push(width(t.head[i])) }
+    for row in t.rows {
+        for i in 0..n {
+            if i < row.len() && width(row[i]) > w[i] { w[i] = width(row[i]) }
+        }
+    }
+    let mut out: List[u8] = List.new()
+    let mut all: List[List[List[u8]]] = List.new()
+    all.push(t.head)
+    for row in t.rows { all.push(row) }
+    for row in all {
+        let mut line: List[u8] = List.new()
+        for i in 0..n {
+            let cell: List[u8] = if i < row.len() { row[i] } else { List.new() }
+            let padn = w[i] - width(cell)
+            if i > 0 { bytes.append(inout line, s("  ")) }
+            if t.right[i] {
+                for k in 0..padn { line.push(32) }
+                bytes.append(inout line, cell)
+            } else {
+                bytes.append(inout line, cell)
+                if i + 1 < n {
+                    for k in 0..padn { line.push(32) }
+                }
+            }
+        }
+        while line.len() > 0 && line[line.len() - 1] == 32 { line.pop() }
+        bytes.append(inout out, line)
+        out.push(10)
+    }
+    out
+}
+
+/// A section title: the text and a rule under it.
+pub fn title(t: str) -> List[u8] {
+    let mut out = s("\n")
+    bytes.append(inout out, s(t))
+    out.push(10)
+    let k = width(s(t))
+    for i in 0..k { out.push(45) }
+    out.push(10)
+    out
+}
+
+/// A row of N cells.
+pub fn r2(c0: List[u8], c1: List[u8]) -> List[List[u8]] {
+    let mut r: List[List[u8]] = List.new()
+    r.push(c0)
+    r.push(c1)
+    r
+}
+pub fn r3(c0: List[u8], c1: List[u8], c2: List[u8]) -> List[List[u8]] {
+    let mut r: List[List[u8]] = List.new()
+    r.push(c0)
+    r.push(c1)
+    r.push(c2)
+    r
+}
+pub fn r4(c0: List[u8], c1: List[u8], c2: List[u8], c3: List[u8]) -> List[List[u8]] {
+    let mut r: List[List[u8]] = List.new()
+    r.push(c0)
+    r.push(c1)
+    r.push(c2)
+    r.push(c3)
+    r
+}
+pub fn r5(c0: List[u8], c1: List[u8], c2: List[u8], c3: List[u8], c4: List[u8]) -> List[List[u8]] {
+    let mut r: List[List[u8]] = List.new()
+    r.push(c0)
+    r.push(c1)
+    r.push(c2)
+    r.push(c3)
+    r.push(c4)
+    r
+}
+pub fn r6(c0: List[u8], c1: List[u8], c2: List[u8], c3: List[u8], c4: List[u8], c5: List[u8]) -> List[List[u8]] {
+    let mut r: List[List[u8]] = List.new()
+    r.push(c0)
+    r.push(c1)
+    r.push(c2)
+    r.push(c3)
+    r.push(c4)
+    r.push(c5)
+    r
+}

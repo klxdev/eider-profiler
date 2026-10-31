@@ -1,0 +1,151 @@
+eider-profiler report: examples/kvstore/main.ei (Eider 0.1.0, written at exit, 4.5 s recorded; profiled: cpu,mem,conc; clock cpu at 99 Hz)
+samples: 1245 = 12.6 s of cpu time; threads: 19 started, 18 exited
+
+Top functions by self time (cpu samples)
+----------------------------------------
+ self%      self   total%     total  function                                 file
+ 38.7%     4.9 s    39.0%     4.9 s  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei
+ 13.8%     1.7 s    13.8%     1.7 s  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei
+  8.4%     1.1 s     8.4%     1.1 s  json.quote_into                          json/json.ei
+  6.5%  818.2 ms     6.5%  818.2 ms  os.sock_send                             core/os.ei
+  5.6%  707.1 ms    30.0%     3.8 s  kv.rpc.closure25                         examples/kvstore/kv.ei
+  5.1%  636.4 ms     5.1%  636.4 ms  sys.lit                                  core/sys.ei
+  4.0%  505.1 ms     4.0%  505.1 ms  bytes.append                             std/bytes.ei
+  1.1%  141.4 ms     1.1%  141.4 ms  bytes.split                              std/bytes.ei
+
+Top functions by total time (cpu samples)
+-----------------------------------------
+ self%      self   total%   total  function                                 file
+  0.1%   10.1 ms    99.7%  12.5 s  task.pool.closure46                      std/task.ei
+  0.8%  101.0 ms    98.7%  12.4 s  server.serve_conn                        http/server.ei
+  0.0%      0 ns    98.7%  12.4 s  server.accept_some.closure43             http/server.ei
+  0.1%   10.1 ms    78.1%   9.8 s  router.handler.closure41                 http/router.ei
+  0.4%   50.5 ms    78.0%   9.8 s  router.Router.handle                     http/router.ei
+  0.3%   40.4 ms    77.0%   9.7 s  profiling.route_labels.closure36         http/profiling.ei
+  0.0%      0 ns    76.6%   9.6 s  profile.with_label_bytes[http.Response]  std/profile.ei
+  0.5%   60.6 ms    76.6%   9.6 s  profile.labelled[http.Response]          std/profile.ei
+
+Hot lines (innermost frame)
+---------------------------
+ self%   samples  function                                 at
+ 37.8%       470  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:42
+ 13.3%       165  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei:42
+  6.5%        81  os.sock_send                             core/os.ei:148
+  4.9%        61  kv.rpc.closure25                         examples/kvstore/kv.ei:102
+  4.6%        57  json.quote_into                          json/json.ei:633
+  4.2%        52  sys.lit                                  core/sys.ei:43
+  3.9%        48  bytes.append                             std/bytes.ei:90
+  2.5%        31  json.quote_into                          json/json.ei:642
+
+CPU by label `route`
+--------------------
+ share   samples  value     hottest function
+ 59.0%       734  /rpc      sync.Lock[kv.Kv].with[Option[List[u8]]]
+ 24.2%       301  (none)    os.sock_send
+ 16.8%       209  /kv/:key  sync.Lock[kv.Kv].with[Option[List[u8]]]
+  0.1%         1  /health   profiling.route_labels.closure36.closure37.closure38
+
+Allocation sites (by bytes)
+---------------------------
+72642614 allocations, 4.7 GiB; peak heap 3.0 MiB, live at the end 0 B in 0 blocks
+  allocs      bytes   live  function                                 at
+39238558    2.4 GiB    0 B  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:42
+13077541  817.7 MiB    0 B  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei:42
+   27186  415.9 MiB    0 B  kv.Store.put.closure4                    examples/kvstore/kv.ei:63
+  969319  321.1 MiB    0 B  bytes.append                             std/bytes.ei:90
+   71764  207.0 MiB    0 B  kv.rpc.closure25                         examples/kvstore/kv.ei:101
+ 4606691  112.3 MiB    0 B  sys.lit                                  core/sys.ei:43
+ 3711783   88.7 MiB    0 B  json.quote_into                          json/json.ei:642
+ 4418703   84.3 MiB    0 B  json.quote_into                          json/json.ei:633
+
+Copy-on-write unshares (a shared String/List/Map/Box copied before a write)
+---------------------------------------------------------------------------
+   count   bytes copied  function                                 at
+39184238        1.8 GiB  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:42
+13059443      618.4 MiB  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei:42
+    9054      415.6 MiB  kv.Store.put.closure4                    examples/kvstore/kv.ei:63
+     499        3.8 MiB  kv.Store.put.closure4                    examples/kvstore/kv.ei:62
+   28458        1.7 MiB  chan.Channel[fn()].send                  std/chan.ei:118
+    6012      333.6 KiB  sync.Lock[chan.St].with[i32]             std/sync.ei:42
+   45257      176.8 KiB  bytes.append                             std/bytes.ei:90
+       1           64 B  io.outln                                 std/io.ei:18
+
+.copy() calls
+-------------
+  count     bytes  function                         at
+3492079  26.6 MiB  parse.scan_head                  http/parse.ei:319
+ 797417   6.1 MiB  bytes.slice                      std/bytes.ei:81
+ 262504   2.0 MiB  bytes.find_byte                  std/bytes.ei:59
+ 147644   1.1 MiB  bytes.from_u64                   std/bytes.ei:178
+  47768   2.2 MiB  sync.Lock[server.Shared].update  std/sync.ei:49
+  45257  10.4 MiB  router.Router.handle             http/router.ei:203
+  45257   4.8 MiB  parse.finish                     http/parse.ei:165
+  45257   1.0 MiB  http.split_target                http/http.ei:306
+
+List growth and Map rehashes
+----------------------------
+kind    count      bytes  function          at
+grow   924062  306.1 MiB  bytes.append      std/bytes.ei:90
+grow    71764  205.9 MiB  kv.rpc.closure25  examples/kvstore/kv.ei:101
+grow   235340   42.3 MiB  bytes.split       std/bytes.ei:105
+grow  4606691   42.0 MiB  sys.lit           core/sys.ei:43
+grow  3711783   32.0 MiB  json.quote_into   json/json.ei:642
+grow  1756950   17.7 MiB  bytes.slice       std/bytes.ei:83
+grow  4418703   16.9 MiB  json.quote_into   json/json.ei:633
+grow   420005   16.8 MiB  sys.take          core/sys.ei:87
+
+Drop calls (types with their own Drop)
+--------------------------------------
+ count      bytes  function                                           at
+ 90512  707.1 KiB  profile.labelled[http.Response]                    std/profile.ei:105
+ 27158  212.2 KiB  profile.labelled[Result[List[u8], jsonrpc.Error]]  std/profile.ei:105
+
+Lock waits (Mutex and runtime locks, contended only)
+----------------------------------------------------
+ waits     total     mean  function                                 at
+  2431   42.9 ms  17.6 us  sync.Lock[chan.St].with[i32]             std/sync.ei:40
+   662    4.6 ms   6.9 us  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:40
+   234    1.5 ms   6.3 us  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei:40
+   358  652.4 us   1.8 us  sync.Lock[chan.St].with[i32]             std/sync.ei:42
+    96  193.7 us   2.0 us  sync.Lock[server.Shared].update          std/sync.ei:48
+   114   79.4 us   696 ns  sync.Lock[server.Shared].update          std/sync.ei:49
+    91   27.3 us   300 ns  sync.Lock[server.Shared].with[i64]       std/sync.ei:40
+    39    5.5 us   139 ns  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:42
+
+Channel receive waits (Chan.recv, sync.Lock)
+--------------------------------------------
+ waits     total      mean  function                                 at
+ 24889    12.5 s  501.7 us  sync.Lock[kv.Kv].with[Option[List[u8]]]  std/sync.ei:40
+  8216     4.2 s  511.2 us  sync.Lock[kv.Kv].with[List[List[u8]]]    std/sync.ei:40
+  4618  413.6 ms   89.6 us  sync.Lock[chan.St].with[i32]             std/sync.ei:40
+   427    6.6 ms   15.6 us  chan.Channel[fn()].recv                  std/chan.ei:162
+    90  532.2 us    5.9 us  sync.Lock[server.Shared].update          std/sync.ei:48
+    60  344.8 us    5.7 us  sync.Lock[server.Shared].with[i64]       std/sync.ei:40
+
+Threads spawned
+---------------
+ spawns  function             at
+     16  task.pool            std/task.ei:280
+      1  main                 examples/kvstore/main.ei:62
+      1  server.Server.serve  http/server.ei:142
+
+Heap over time
+--------------
+      at       live      peak   allocations   threads
+100.5 ms    9.6 KiB   9.6 KiB           386        19
+502.0 ms   14.9 KiB  14.9 KiB           640        19
+903.4 ms  369.5 KiB   2.8 MiB       6753198        19
+   1.3 s  244.6 KiB   2.8 MiB      14209875        19
+   1.7 s  308.4 KiB   2.8 MiB      21478014        19
+   2.1 s  384.8 KiB   2.8 MiB      28941741        19
+   2.5 s  271.6 KiB   2.8 MiB      36375313        19
+   2.9 s  310.5 KiB   2.8 MiB      43687302        19
+   3.3 s  231.3 KiB   2.8 MiB      50984464        19
+   3.7 s  256.8 KiB   3.0 MiB      58431773        19
+   4.1 s  370.6 KiB   3.0 MiB      65721430        19
+   4.5 s  105.9 KiB   3.0 MiB      72642179        19
+   4.5 s        0 B   3.0 MiB      72642614         1
+
+Leaks at exit (allocated, never freed, after main returned)
+-----------------------------------------------------------
+none: every allocation was freed

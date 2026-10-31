@@ -1,0 +1,25 @@
+// CPU: `hot` takes about five times the time of `warm`; both are called from `run`, under
+// the labels phase=hot and phase=warm.
+import "std/profile"
+
+fn hot(n: i64) -> i64 {
+    let mut s: i64 = 0
+    for i in 0..n { s = (s + i * i) % 1000003 }
+    s
+}
+
+fn warm(n: i64) -> i64 {
+    let mut s: i64 = 0
+    for i in 0..n { s = (s + i) % 999983 }
+    s
+}
+
+fn run() -> i64 {
+    let a = profile.with_label("phase", "hot", || -> i64 { hot(150000000) })
+    let b = profile.with_label("phase", "warm", || -> i64 { warm(30000000) })
+    a + b
+}
+
+fn main() uses io {
+    print(run() > 0)
+}

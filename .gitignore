@@ -1,0 +1,4 @@
+target/
+*.prof
+*.prof.tmp
+!tests/fixtures/*.prof

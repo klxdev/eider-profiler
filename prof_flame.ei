@@ -1,0 +1,263 @@
+// prof_flame: stacks as Brendan Gregg's folded format (`folded`) and as a self-contained
+// interactive flame graph (`flame`): one HTML file with the stacks as JSON and a small
+// script that draws them as SVG (no network, no library).
+
+import "core/sys"
+import "std/bytes"
+import "json"
+import "prof_model.ei" as m
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
+
+/// The kinds of stacks a profile has, in a fixed order.
+pub fn kinds(p: m.Profile) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for k in ["cpu", "alloc", "cow", "lock", "recv"] {
+        let mut has = false
+        for st in p.stacks {
+            if is(st.kind, k) { has = true }
+        }
+        if has { out.push(s(k)) }
+    }
+    out
+}
+
+/// A frame's name in folded output: the function, with `:line` when `lines`. Folded format
+/// separates frames with `;` and ends with a space and the count, so neither appears in a name.
+fn frame_name(p: m.Profile, f: m.Frame, lines: bool) -> List[u8] {
+    let mut n: List[u8] = List.new()
+    for b in m.fn_name(p, f.func) {
+        if b == 59 || b == 32 { n.push(95) } else { n.push(b) }
+    }
+    if lines && f.line > 0 {
+        n.push(58)
+        bytes.append(inout n, bytes.from_i64(f.line))
+    }
+    n
+}
+
+/// `folded`: one line per stack of `kind`, `root;...;leaf <weight>`; weight is samples for
+/// cpu, bytes for alloc and cow, nanoseconds for lock and recv. `label` filters as in report.
+pub fn folded(p: m.Profile, kind: List[u8], label: List[u8], lines: bool) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for st in p.stacks {
+        if !bytes.eq(st.kind, kind) || !m.label_matches(p, st.label, label) { continue }
+        for i in 0..st.frames.len() {
+            if i > 0 { out.push(59) }
+            bytes.append(inout out, frame_name(p, st.frames[i], lines))
+        }
+        if st.frames.len() == 0 { bytes.append(inout out, s("[no Eider frame]")) }
+        out.push(32)
+        let v = if is(kind, "cpu") { st.n } else { st.w }
+        bytes.append(inout out, bytes.from_i64(v))
+        out.push(10)
+    }
+    out
+}
+
+// ---- the tree of one kind: nodes by (parent, function)
+
+type Node = { func: u32, value: i64, kids: List[u32] }
+
+fn tree(p: m.Profile, kind: List[u8], label: List[u8]) -> List[Node] {
+    let mut nodes: List[Node] = List.new()
+    nodes.push(Node(0, 0, List.new()))
+    let mut child: Map[u64, u32] = Map.new()
+    for st in p.stacks {
+        if !bytes.eq(st.kind, kind) || !m.label_matches(p, st.label, label) { continue }
+        let v = if is(kind, "cpu") { st.n } else { st.w }
+        nodes[0].value += v
+        let mut cur: u32 = 0
+        for f in st.frames {
+            let key = (cur as u64) * 4294967296 + (f.func as u64)
+            let mut nx: u32 = 0
+            match child.get(key) {
+                Some(x) => { nx = x }
+                None => {
+                    nodes.push(Node(f.func, 0, List.new()))
+                    nx = (nodes.len() - 1) as u32
+                    child.insert(key, nx)
+                    nodes[cur as usize].kids.push(nx)
+                }
+            }
+            nodes[nx as usize].value += v
+            cur = nx
+        }
+    }
+    nodes
+}
+
+/// Node i and its subtree as `[name index, value, [children]]`, children largest first.
+fn emit_node(inout out: List[u8], nodes: List[Node], i: u32, inout names: Map[u32, u32], inout order: List[u32]) {
+    let n = nodes[i as usize]
+    let mut ni: u32 = 0
+    if i != 0 {
+        match names.get(n.func) {
+            Some(x) => { ni = x }
+            None => {
+                order.push(n.func)
+                ni = order.len() as u32
+                names.insert(n.func, ni)
+            }
+        }
+    }
+    out.push(91)
+    bytes.append(inout out, bytes.from_u64(ni as u64))
+    out.push(44)
+    bytes.append(inout out, bytes.from_i64(n.value))
+    out.push(44)
+    out.push(91)
+    // largest first (insertion sort: the lists are short)
+    let mut ks = n.kids.copy()
+    let mut a: usize = 1
+    while a < ks.len() {
+        let mut b = a
+        while b > 0 && nodes[ks[b - 1] as usize].value < nodes[ks[b] as usize].value {
+            let t = ks[b - 1]
+            ks[b - 1] = ks[b]
+            ks[b] = t
+            b -= 1
+        }
+        a += 1
+    }
+    for k in 0..ks.len() {
+        if k > 0 { out.push(44) }
+        emit_node(inout out, nodes, ks[k], inout names, inout order)
+    }
+    out.push(93)
+    out.push(93)
+}
+
+/// The flame graph page for every stack kind of `p` (or only `only`, when not empty).
+pub fn html(p: m.Profile, only: List[u8], label: List[u8]) -> List[u8] {
+    let mut data = s("{\"program\":")
+    json.quote_into(inout data, p.program)
+    data.push(44)
+    bytes.append(inout data, s("\"period_ns\":"))
+    bytes.append(inout data, bytes.from_i64(p.period_ns))
+    bytes.append(inout data, s(",\"label\":"))
+    json.quote_into(inout data, label)
+    bytes.append(inout data, s(",\"kinds\":{"))
+    let mut first = true
+    let mut names: Map[u32, u32] = Map.new()
+    let mut order: List[u32] = List.new()
+    for k in kinds(p) {
+        if only.len() > 0 && !bytes.eq(k, only) { continue }
+        if !first { data.push(44) }
+        first = false
+        json.quote_into(inout data, k)
+        data.push(58)
+        let nodes = tree(p, k, label)
+        emit_node(inout data, nodes, 0, inout names, inout order)
+    }
+    bytes.append(inout data, s("},\"names\":[\"all\""))
+    for f in order {
+        data.push(44)
+        let mut n = m.fn_name(p, f)
+        n.push(32)
+        n.push(40)
+        bytes.append(inout n, m.fn_file(p, f))
+        n.push(41)
+        json.quote_into(inout data, n)
+    }
+    bytes.append(inout data, s("]}"))
+    // keep `</script>` out of the data
+    let mut safe: List[u8] = List.new()
+    for b in data {
+        if b == 60 { bytes.append(inout safe, s("\\u003c")) } else { safe.push(b) }
+    }
+    let mut out = page_head()
+    bytes.append(inout out, safe)
+    bytes.append(inout out, page_tail())
+    out
+}
+
+fn page_head() -> List[u8] {
+    let mut t: List[u8] = List.new()
+    for l in [
+        "<!doctype html>",
+        "<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+        "<title>Eider flame graph</title>",
+        "<style>",
+        ":root{--bg:#fff;--fg:#1d1d1f;--mute:#6e6e73;--line:#d2d2d7;--hl:#7b2ff7}",
+        "@media (prefers-color-scheme:dark){:root{--bg:#161618;--fg:#f2f2f2;--mute:#a1a1a6;--line:#3a3a3c;--hl:#c49bff}}",
+        "body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.4 system-ui,sans-serif}",
+        "header{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}",
+        "header h1{font-size:15px;margin:0}",
+        "select,input,button{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:3px 6px}",
+        "#info{color:var(--mute);min-height:1.4em;padding:6px 16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}",
+        "#wrap{padding:0 16px 16px}",
+        "svg{display:block;width:100%}",
+        "rect{stroke:var(--bg);stroke-width:.5;cursor:pointer}",
+        "text{font:11px ui-monospace,monospace;fill:#111;pointer-events:none}",
+        ".hit rect{fill:var(--hl)!important}",
+        "</style></head><body>",
+        "<header><h1 id=\"t\"></h1>",
+        "<label>kind <select id=\"kind\"></select></label>",
+        "<input id=\"q\" placeholder=\"search (regex)\" size=\"18\">",
+        "<button id=\"reset\">reset zoom</button></header>",
+        "<div id=\"info\">Click a frame to zoom in, the top bar to zoom out. Width is the share of the kind's weight.</div>",
+        "<div id=\"wrap\"><svg id=\"g\" xmlns=\"http://www.w3.org/2000/svg\"></svg></div>",
+        "<script id=\"data\" type=\"application/json\">",
+    ] {
+        bytes.append(inout t, sys.lit(l))
+        t.push(10)
+    }
+    t.pop()
+    t
+}
+
+fn page_tail() -> List[u8] {
+    let mut t: List[u8] = List.new()
+    for l in [
+        "</script>",
+        "<script>",
+        "(function(){",
+        "var D=JSON.parse(document.getElementById('data').textContent);",
+        "var svg=document.getElementById('g'),info=document.getElementById('info'),sel=document.getElementById('kind'),q=document.getElementById('q');",
+        "var H=17,NS='http://www.w3.org/2000/svg',kind=null,zoom=null,units={cpu:'samples',alloc:'bytes',cow:'bytes copied',lock:'ns waited',recv:'ns waited'};",
+        "document.getElementById('t').textContent='Eider flame graph: '+D.program+(D.label?' ['+D.label+']':'');",
+        "Object.keys(D.kinds).forEach(function(k){var o=document.createElement('option');o.value=k;o.textContent=k;sel.appendChild(o);});",
+        "function hue(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return h;}",
+        "function color(name){var h=hue(name.split(' ')[0]);return 'hsl('+(10+h%45)+','+(55+h%30)+'%,'+(58+h%14)+'%)';}",
+        "function fmt(v){if(kind==='cpu'){var ms=v*D.period_ns/1e6;return v+' samples ('+(ms>=1000?(ms/1000).toFixed(2)+' s':ms.toFixed(1)+' ms')+')';}",
+        " if(kind==='alloc'||kind==='cow'){return v>=1048576?(v/1048576).toFixed(1)+' MiB':v>=1024?(v/1024).toFixed(1)+' KiB':v+' B';}",
+        " return v>=1e9?(v/1e9).toFixed(2)+' s':v>=1e6?(v/1e6).toFixed(1)+' ms':v>=1e3?(v/1e3).toFixed(1)+' us':v+' ns';}",
+        "function depth(n){var d=0;n[2].forEach(function(c){d=Math.max(d,depth(c));});return d+1;}",
+        "function draw(){",
+        " var root=D.kinds[kind];if(!root){return;}",
+        " var top=zoom||root,W=svg.clientWidth||1000,total=root[1],re=null;",
+        " try{if(q.value)re=new RegExp(q.value);}catch(e){}",
+        " while(svg.firstChild)svg.removeChild(svg.firstChild);",
+        " var rows=depth(top);svg.setAttribute('height',rows*H+2);",
+        " function put(n,x,w,d){",
+        "  if(w<0.3)return;",
+        "  var g=document.createElementNS(NS,'g'),r=document.createElementNS(NS,'rect'),name=D.names[n[0]];",
+        "  r.setAttribute('x',x);r.setAttribute('y',d*H);r.setAttribute('width',Math.max(w,0.3));r.setAttribute('height',H-1);",
+        "  r.setAttribute('fill',d===0?'#bbb':color(name));",
+        "  if(re&&re.test(name))g.setAttribute('class','hit');",
+        "  var t=document.createElementNS(NS,'title');t.textContent=name+'\\n'+fmt(n[1])+', '+(100*n[1]/total).toFixed(2)+'%';",
+        "  g.appendChild(t);g.appendChild(r);",
+        "  if(w>40){var tx=document.createElementNS(NS,'text');tx.setAttribute('x',x+3);tx.setAttribute('y',d*H+12);",
+        "   var c=Math.floor((w-6)/6.6);tx.textContent=name.length>c?name.slice(0,Math.max(c-1,0))+'\\u2026':name;g.appendChild(tx);}",
+        "  g.addEventListener('click',function(){zoom=(n===top&&d===0)?null:n;draw();});",
+        "  g.addEventListener('mouseover',function(){info.textContent=name+': '+fmt(n[1])+' ('+(100*n[1]/total).toFixed(2)+'% of all '+units[kind]+')';});",
+        "  svg.appendChild(g);",
+        "  var cx=x;n[2].forEach(function(c){var cw=w*c[1]/n[1];put(c,cx,cw,d+1);cx+=cw;});",
+        " }",
+        " put(top,0,W,0);",
+        "}",
+        "sel.addEventListener('change',function(){kind=sel.value;zoom=null;draw();});",
+        "q.addEventListener('input',draw);",
+        "document.getElementById('reset').addEventListener('click',function(){zoom=null;draw();});",
+        "window.addEventListener('resize',draw);",
+        "kind=sel.value;draw();",
+        "})();",
+        "</script></body></html>",
+    ] {
+        bytes.append(inout t, sys.lit(l))
+        t.push(10)
+    }
+    t
+}

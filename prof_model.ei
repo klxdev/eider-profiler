@@ -1,0 +1,293 @@
+// prof_model: a profile file (eider-lang docs/runtime.md "Profile format", version 1) read
+// into memory, and the names and positions of its frames.
+//
+// The file is JSON lines: a header object, then one record per line (`"t"` says which):
+// file, fn, label, thread, stack, site, heap, summary. Unknown record kinds and fields are
+// ignored, so a newer runtime's file still reads (the header's `eider_prof` is the format
+// version; a higher one is refused).
+
+import "core/sys"
+import "std/bytes"
+import "json"
+
+pub const FORMAT: i64 = 1
+/// this tool's version (VERSION; the same major.minor as the toolchain it goes with)
+pub const TOOL_VERSION: str = "0.1.0"
+/// the fn id of the frame that marks a stack cut short (deeper than the runtime keeps)
+pub const TRUNC: u32 = 4294967295
+
+pub type Frame = { func: u32, line: i64 }
+/// An aggregated stack, outermost frame first: `n` samples or events, `w` their weight
+/// (ns for cpu and waits, bytes for alloc and cow).
+pub type Stack = { kind: List[u8], label: u32, n: i64, w: i64, frames: List[Frame] }
+/// Counts at one position: `w` is bytes (alloc, cow, copy, grow, rehash, drop) or
+/// nanoseconds (lock, recv); live_* only for alloc.
+pub type Site = { kind: List[u8], func: u32, line: i64, n: i64, w: i64, live_n: i64, live_w: i64 }
+pub type Label = { parent: u32, key: List[u8], value: List[u8] }
+pub type Thread = { id: i64, start_ns: i64, end_ns: i64, samples: i64, dropped: i64 }
+pub type Point = { ns: i64, live: i64, peak: i64, allocs: i64, threads: i64 }
+
+pub type Summary = {
+    samples: i64, dropped: i64, allocs: i64, alloc_bytes: i64, frees: i64, live: i64,
+    live_n: i64, peak: i64, threads_started: i64, threads_exited: i64,
+}
+
+pub type Profile = {
+    program: List[u8], version: List[u8], reason: List[u8], what: List[u8], clock: List[u8],
+    hz: i64, period_ns: i64, duration_ns: i64, clean_exit: bool,
+    files: List[List[u8]],
+    /// by fn id (0 and gaps: empty)
+    names: List[List[u8]],
+    fn_file: List[u32],
+    /// by label id (0: none)
+    labels: List[Label],
+    threads: List[Thread],
+    stacks: List[Stack],
+    sites: List[Site],
+    heap: List[Point],
+    sum: Summary,
+}
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn empty() -> Profile {
+    Profile(List.new(), List.new(), List.new(), List.new(), List.new(), 0, 0, 0, false, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Summary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+}
+
+fn int_of(d: json.Doc, o: u32, key: str) -> i64 {
+    match json.field(d, o, key) {
+        Some(v) => json.as_int(d, v).unwrap_or(0)
+        None => 0
+    }
+}
+
+fn str_of(d: json.Doc, o: u32, key: str) -> List[u8] {
+    match json.field(d, o, key) {
+        Some(v) => json.as_str(d, v).unwrap_or(List.new())
+        None => List.new()
+    }
+}
+
+fn bool_of(d: json.Doc, o: u32, key: str) -> bool {
+    match json.field(d, o, key) {
+        Some(v) => json.as_bool(d, v).unwrap_or(false)
+        None => false
+    }
+}
+
+fn set_at(inout xs: List[List[u8]], i: usize, v: List[u8]) {
+    while xs.len() <= i { xs.push(List.new()) }
+    xs[i] = v
+}
+
+fn frames_of(d: json.Doc, o: u32) -> List[Frame] {
+    let mut out: List[Frame] = List.new()
+    match json.field(d, o, "frames") {
+        Some(arr) => {
+            for i in 0..json.len(d, arr) {
+                let pair = json.at(d, arr, i).unwrap_or(0)
+                let f = json.as_int(d, json.at(d, pair, 0).unwrap_or(0)).unwrap_or(0)
+                let l = json.as_int(d, json.at(d, pair, 1).unwrap_or(0)).unwrap_or(0)
+                out.push(Frame(f as u32, l))
+            }
+        }
+        None => {}
+    }
+    out
+}
+
+/// The profile in `text`, or what is wrong with it.
+pub fn parse(text: List[u8]) -> Result[Profile, List[u8]] {
+    let mut p = empty()
+    let mut lineno: u64 = 0
+    let mut seen_header = false
+    for line in bytes.split(text, 10) {
+        lineno += 1
+        if line.len() == 0 { continue }
+        let d = match json.parse(line) {
+            Ok(x) => x
+            Err(e) => {
+                let mut m = s("line ")
+                bytes.append(inout m, bytes.from_u64(lineno))
+                bytes.append(inout m, s(": "))
+                bytes.append(inout m, json.error_text(e))
+                return Err(m)
+            }
+        }
+        let o = d.root
+        if !seen_header {
+            match json.field(d, o, "eider_prof") {
+                Some(v) => {
+                    let ver = json.as_int(d, v).unwrap_or(0)
+                    if ver > FORMAT || ver < 1 {
+                        let mut m = s("profile format ")
+                        bytes.append(inout m, bytes.from_i64(ver))
+                        bytes.append(inout m, s(" (this eider-profiler reads 1)"))
+                        return Err(m)
+                    }
+                }
+                None => { return Err(s("not an Eider profile (no eider_prof header)")) }
+            }
+            seen_header = true
+            p.program = str_of(d, o, "program")
+            p.version = str_of(d, o, "version")
+            p.reason = str_of(d, o, "reason")
+            p.what = str_of(d, o, "what")
+            p.clock = str_of(d, o, "clock")
+            p.hz = int_of(d, o, "hz")
+            p.period_ns = int_of(d, o, "period_ns")
+            p.duration_ns = int_of(d, o, "duration_ns")
+            p.clean_exit = bool_of(d, o, "clean_exit")
+            continue
+        }
+        let t = str_of(d, o, "t")
+        if bytes.eq(t, s("file")) {
+            set_at(inout p.files, int_of(d, o, "id") as usize, str_of(d, o, "path"))
+        } else if bytes.eq(t, s("fn")) {
+            let id = int_of(d, o, "id") as usize
+            set_at(inout p.names, id, str_of(d, o, "name"))
+            while p.fn_file.len() <= id { p.fn_file.push(0) }
+            p.fn_file[id] = int_of(d, o, "file") as u32
+        } else if bytes.eq(t, s("label")) {
+            let id = int_of(d, o, "id") as usize
+            while p.labels.len() <= id { p.labels.push(Label(0, List.new(), List.new())) }
+            p.labels[id] = Label(int_of(d, o, "parent") as u32, str_of(d, o, "key"), str_of(d, o, "value"))
+        } else if bytes.eq(t, s("thread")) {
+            p.threads.push(Thread(int_of(d, o, "id"), int_of(d, o, "start_ns"), int_of(d, o, "end_ns"), int_of(d, o, "samples"), int_of(d, o, "dropped")))
+        } else if bytes.eq(t, s("stack")) {
+            p.stacks.push(Stack(str_of(d, o, "kind"), int_of(d, o, "label") as u32, int_of(d, o, "n"), int_of(d, o, "w"), frames_of(d, o)))
+        } else if bytes.eq(t, s("site")) {
+            p.sites.push(Site(str_of(d, o, "kind"), int_of(d, o, "fn") as u32, int_of(d, o, "line"), int_of(d, o, "n"), int_of(d, o, "w"), int_of(d, o, "live_n"), int_of(d, o, "live_w")))
+        } else if bytes.eq(t, s("heap")) {
+            p.heap.push(Point(int_of(d, o, "ns"), int_of(d, o, "live"), int_of(d, o, "peak"), int_of(d, o, "allocs"), int_of(d, o, "threads")))
+        } else if bytes.eq(t, s("summary")) {
+            p.sum = Summary(int_of(d, o, "samples"), int_of(d, o, "dropped"), int_of(d, o, "allocs"), int_of(d, o, "alloc_bytes"), int_of(d, o, "frees"), int_of(d, o, "live"), int_of(d, o, "live_n"), int_of(d, o, "peak"), int_of(d, o, "threads_started"), int_of(d, o, "threads_exited"))
+        }
+    }
+    if !seen_header { return Err(s("empty profile")) }
+    Ok(p)
+}
+
+/// `major.minor` of a version `major.minor.patch` (the text up to the second dot).
+pub fn major_minor(v: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut dots = 0
+    for b in v {
+        if b == 46 {
+            dots += 1
+            if dots == 2 { break }
+        }
+        out.push(b)
+    }
+    out
+}
+
+// ---- names
+
+/// An Eider name as its module writes it: the compiler's `<module>__0<package>[_s<path>]__f`
+/// becomes `<module>.f` (`bytes__0std__append` is `bytes.append`), `<module>__f` becomes
+/// `<module>.f`; methods (`Restore.drop`), closures and generic instances keep their spelling.
+pub fn demangle(raw: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    let n = raw.len()
+    while i < n {
+        if i + 2 < n && raw[i] == 95 && raw[i + 1] == 95 && raw[i + 2] == 48 {
+            // `__0<package>...__`: skip to the next `__`
+            let mut j = i + 3
+            while j + 1 < n && !(raw[j] == 95 && raw[j + 1] == 95) { j += 1 }
+            out.push(46)
+            i = j + 2
+        } else if i + 1 < n && raw[i] == 95 && raw[i + 1] == 95 {
+            out.push(46)
+            i += 2
+        } else {
+            out.push(raw[i])
+            i += 1
+        }
+    }
+    out
+}
+
+/// The display name of function `id`.
+pub fn fn_name(p: Profile, id: u32) -> List[u8] {
+    if id == TRUNC { return s("[truncated]") }
+    if id == 0 { return s("[runtime]") }
+    let i = id as usize
+    if i >= p.names.len() || p.names[i].len() == 0 {
+        let mut m = s("fn#")
+        bytes.append(inout m, bytes.from_u64(id as u64))
+        return m
+    }
+    demangle(p.names[i])
+}
+
+/// The source file of function `id` ("" if unknown).
+pub fn fn_file(p: Profile, id: u32) -> List[u8] {
+    let i = id as usize
+    if id == TRUNC || i >= p.fn_file.len() { return List.new() }
+    let f = p.fn_file[i] as usize
+    if f >= p.files.len() { return List.new() }
+    p.files[f]
+}
+
+/// `file:line` of a position in function `id` (`file` alone for line 0).
+pub fn position(p: Profile, id: u32, line: i64) -> List[u8] {
+    let mut out = fn_file(p, id)
+    if line > 0 {
+        out.push(58)
+        bytes.append(inout out, bytes.from_i64(line))
+    }
+    out
+}
+
+/// The value of label `key` in label set `id` (its own pair or an ancestor's), if any.
+pub fn label_value(p: Profile, id: u32, key: List[u8]) -> Option[List[u8]] {
+    let mut cur = id.copy()
+    let mut guard: u32 = 0
+    while cur != 0 && (cur as usize) < p.labels.len() && guard < 65536 {
+        let l = p.labels[cur as usize]
+        if bytes.eq(l.key, key) { return Some(l.value) }
+        cur = l.parent
+        guard += 1
+    }
+    None
+}
+
+/// Label set `id` as `k=v,k=v` (outermost first).
+pub fn label_text(p: Profile, id: u32) -> List[u8] {
+    let mut parts: List[List[u8]] = List.new()
+    let mut cur = id.copy()
+    while cur != 0 && (cur as usize) < p.labels.len() {
+        let l = p.labels[cur as usize]
+        let mut kv = l.key.copy()
+        kv.push(61)
+        bytes.append(inout kv, l.value)
+        parts.push(kv)
+        cur = l.parent
+    }
+    let mut out: List[u8] = List.new()
+    let mut i = parts.len()
+    while i > 0 {
+        i -= 1
+        if out.len() > 0 { out.push(44) }
+        bytes.append(inout out, parts[i])
+    }
+    out
+}
+
+/// Whether label set `id` has `key=value` (`want` is `key=value`; empty matches everything).
+pub fn label_matches(p: Profile, id: u32, want: List[u8]) -> bool {
+    if want.len() == 0 { return true }
+    match bytes.find_byte(want, 61, 0) {
+        Some(eq) => {
+            let key = bytes.slice(want, 0, eq)
+            let val = bytes.slice(want, eq + 1, want.len())
+            match label_value(p, id, key) {
+                Some(v) => bytes.eq(v, val)
+                None => false
+            }
+        }
+        None => label_value(p, id, want).is_some()
+    }
+}

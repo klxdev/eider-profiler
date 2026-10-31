@@ -1,0 +1,89 @@
+eider-profiler report: svc.ei (Eider 0.1.0, written at exit, 2.5 s recorded; profiled: cpu,mem,conc; clock cpu at 100 Hz)
+samples: 150 (+2 dropped) = 1.5 s of cpu time; threads: 5 started, 4 exited
+
+Top functions by self time (cpu samples)
+----------------------------------------
+ self%      self   total%     total  function       file
+ 40.0%  600.0 ms    53.3%  800.0 ms  get_todo       svc.ei
+ 40.0%  600.0 ms    40.0%  600.0 ms  bytes.append   std/bytes.ei
+ 13.3%  200.0 ms    13.3%  200.0 ms  Store.lock     svc.ei
+  6.7%  100.0 ms   100.0%     1.5 s  main           svc.ei
+  0.0%      0 ns    93.3%     1.4 s  serve          svc.ei
+  0.0%      0 ns    93.3%     1.4 s  router.handle  http/router.ei
+  0.0%      0 ns    26.7%  400.0 ms  list_todos     svc.ei
+
+Top functions by total time (cpu samples)
+-----------------------------------------
+ self%      self   total%     total  function       file
+  6.7%  100.0 ms   100.0%     1.5 s  main           svc.ei
+  0.0%      0 ns    93.3%     1.4 s  serve          svc.ei
+  0.0%      0 ns    93.3%     1.4 s  router.handle  http/router.ei
+ 40.0%  600.0 ms    53.3%  800.0 ms  get_todo       svc.ei
+ 40.0%  600.0 ms    40.0%  600.0 ms  bytes.append   std/bytes.ei
+  0.0%      0 ns    26.7%  400.0 ms  list_todos     svc.ei
+ 13.3%  200.0 ms    13.3%  200.0 ms  Store.lock     svc.ei
+
+Hot lines (innermost frame)
+---------------------------
+ self%   samples  function      at
+ 40.0%        60  get_todo      svc.ei:41
+ 40.0%        60  bytes.append  std/bytes.ei:95
+ 13.3%        20  Store.lock    svc.ei:61
+  6.7%        10  main          svc.ei:11
+
+Allocation sites (by bytes)
+---------------------------
+5801 allocations, 2.1 MiB; peak heap 11.7 KiB, live at the end 96 B in 2 blocks
+ allocs      bytes   live  function      at
+   5000    1.5 MiB    0 B  bytes.append  std/bytes.ei:95
+    800  585.9 KiB   96 B  get_todo      svc.ei:42
+      1    4.0 KiB    0 B  main          svc.ei:9
+
+Copy-on-write unshares (a shared String/List/Map/Box copied before a write)
+---------------------------------------------------------------------------
+ count   bytes copied  function    at
+   400        1.1 MiB  list_todos  svc.ei:52
+
+.copy() calls
+-------------
+ count     bytes  function    at
+   900  21.1 KiB  list_todos  svc.ei:50
+
+List growth and Map rehashes
+----------------------------
+kind     count      bytes  function      at
+grow       120  293.0 KiB  bytes.append  std/bytes.ei:95
+rehash       3    5.9 KiB  serve         svc.ei:15
+
+Drop calls (types with their own Drop)
+--------------------------------------
+ count   bytes  function  at
+    44   352 B  serve     svc.ei:25
+
+Lock waits (Mutex and runtime locks, contended only)
+----------------------------------------------------
+ waits   total      mean  function    at
+     7  3.5 ms  500.0 us  Store.lock  svc.ei:61
+
+Channel receive waits (Chan.recv, sync.Lock)
+--------------------------------------------
+ waits     total    mean  function  at
+   250  900.0 ms  3.6 ms  serve     svc.ei:18
+
+Threads spawned
+---------------
+ spawns  function  at
+      4  main      svc.ei:8
+
+Heap over time
+--------------
+      at     live      peak   allocations   threads
+100.0 ms  2.0 KiB   4.0 KiB           100         5
+   1.2 s  8.8 KiB  11.7 KiB          3000         5
+   2.5 s     96 B  11.7 KiB          5801         1
+
+Leaks at exit (allocated, never freed, after main returned)
+-----------------------------------------------------------
+ blocks   bytes  function  at
+      2    96 B  get_todo  svc.ei:42
+exit 0

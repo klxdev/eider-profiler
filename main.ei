@@ -1,0 +1,341 @@
+// eider-profiler: reads the profiles that Eider programs built with `eiderc build|run
+// --profile` write (eider-lang docs/runtime.md "Profiler"), and records them.
+//
+//   eider-profiler report <file> [--top N] [--label k=v] [--by key] [--json]
+//   eider-profiler flame <file> -o out.html [--kind cpu|alloc|cow|lock|recv] [--label k=v]
+//   eider-profiler folded <file> [--kind K] [--label k=v] [--lines]
+//   eider-profiler diff <a> <b> [--top N] [--check] [--tolerance PCT] [--json]
+//   eider-profiler record [-o file] [--profile=cpu,mem,conc] [--hz N] [--wall] -- <prog.ei> [args...]
+//
+// See README.md. Modules: prof_model (the file), prof_report (report, diff), prof_flame
+// (folded, flame), prof_text (tables).
+
+import "core/sys"
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "std/proc"
+import "prof_model.ei" as m
+import "prof_report.ei" as rep
+import "prof_flame.ei" as fl
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
+
+fn usage() -> List[u8] {
+    let mut t: List[u8] = List.new()
+    for l in [
+        "eider-profiler 0.1.0: profiles of Eider programs (built with `eiderc build|run --profile`)",
+        "  eider-profiler --version                     the version (it goes with Eider of the same major.minor)",
+        "",
+        "usage:",
+        "  eider-profiler report <file> [--top N] [--label k=v] [--by key] [--json]",
+        "      top functions (self and total), hot lines, allocation sites, copy-on-write and",
+        "      .copy() hot spots, growth, Drop calls, lock and channel waits, threads, leaks",
+        "  eider-profiler flame <file> -o out.html [--kind K] [--label k=v]",
+        "      a self-contained interactive flame graph (every kind, or K: cpu alloc cow lock recv)",
+        "  eider-profiler folded <file> [--kind K] [--label k=v] [--lines]",
+        "      Brendan Gregg's folded stacks (default kind cpu: samples; alloc/cow: bytes; lock/recv: ns)",
+        "  eider-profiler diff <a> <b> [--top N] [--check] [--tolerance PCT] [--json]",
+        "      what changed from a to b; --check exits 1 when a deterministic count (allocations,",
+        "      bytes allocated, copy-on-write, .copy(), growth, rehashes, drops) grew by more than",
+        "      PCT percent (default 0)",
+        "  eider-profiler record [-o file] [--profile=cpu,mem,conc] [--hz N] [--wall] -- <prog.ei> [args...]",
+        "      build <prog.ei> with --profile, run it with args, and write its profile (default eider.prof)",
+        "",
+        "environment:",
+        "  EIDERC        the compiler for `record` (default: $EIDER_LANG/target/eiderc-next, else eiderc)",
+        "  EIDER_LANG    the eider-lang checkout (default ../eider-lang next to this tool's repository)",
+    ] {
+        bytes.append(inout t, sys.lit(l))
+        t.push(10)
+    }
+    t
+}
+
+fn die(msg: List[u8], code: i32) uses io {
+    let mut m2 = s("eider-profiler: ")
+    bytes.append(inout m2, msg)
+    io.errln(m2)
+    env.exit(code)
+}
+
+fn load(path: List[u8]) -> m.Profile uses io, fs {
+    let text: List[u8] = match fs.read(path) {
+        Ok(t) => t
+        Err(e) => {
+            let mut msg = s("cannot read ")
+            bytes.append(inout msg, path)
+            bytes.append(inout msg, s(": "))
+            bytes.append(inout msg, e.bytes())
+            die(msg, 2)
+            List.new()
+        }
+    }
+    match m.parse(text) {
+        Ok(p) => {
+            // a profile from another major.minor of the toolchain may mean other things
+            if p.version.len() > 0 && !bytes.eq(m.major_minor(p.version), m.major_minor(s(m.TOOL_VERSION))) {
+                let mut w = s("eider-profiler: warning: ")
+                bytes.append(inout w, path)
+                bytes.append(inout w, s(" was written by Eider "))
+                bytes.append(inout w, p.version)
+                bytes.append(inout w, s(", this eider-profiler goes with Eider "))
+                bytes.append(inout w, m.major_minor(s(m.TOOL_VERSION)))
+                bytes.append(inout w, s(".x"))
+                io.errln(w)
+            }
+            p
+        }
+        Err(e) => {
+            let mut msg = path.copy()
+            bytes.append(inout msg, s(": "))
+            bytes.append(inout msg, e)
+            die(msg, 2)
+            m.parse(s("{\"eider_prof\":1}")).unwrap()
+        }
+    }
+}
+
+type Args = {
+    cmd: List[u8], files: List[List[u8]], out: List[u8], json: bool, kind: List[u8],
+    o: rep.Opts, lines: bool, check: bool, tol: i64, what: List[u8], hz: List[u8], wall: bool,
+    rest: List[List[u8]],
+}
+
+fn number(v: List[u8], what: str) -> u64 uses io {
+    match bytes.parse_u64(v) {
+        Some(n) => n
+        None => {
+            let mut msg = s(what)
+            bytes.append(inout msg, s(" needs a number, not "))
+            bytes.append(inout msg, v)
+            die(msg, 2)
+            0
+        }
+    }
+}
+
+fn parse_args() -> Args uses io {
+    let argv = env.args()
+    let mut a = Args(List.new(), List.new(), List.new(), false, List.new(), rep.opts(), false, false, 0, List.new(), List.new(), false, List.new())
+    let mut i: usize = 1
+    while i < argv.len() {
+        let x = argv[i]
+        i += 1
+        let has_next = i < argv.len()
+        if is(x, "--version") || is(x, "-V") {
+            let mut v = s("eider-profiler ")
+            bytes.append(inout v, s(m.TOOL_VERSION))
+            bytes.append(inout v, s(" (Eider "))
+            bytes.append(inout v, m.major_minor(s(m.TOOL_VERSION)))
+            bytes.append(inout v, s(".x, profile format 1)"))
+            io.outln(v)
+            env.exit(0)
+        } else if is(x, "--help") || is(x, "-h") || is(x, "help") {
+            io.out(usage())
+            env.exit(0)
+        } else if is(x, "--") {
+            while i < argv.len() {
+                a.rest.push(argv[i])
+                i += 1
+            }
+        } else if is(x, "--json") {
+            a.json = true
+        } else if is(x, "--lines") {
+            a.lines = true
+        } else if is(x, "--check") {
+            a.check = true
+        } else if is(x, "--wall") {
+            a.wall = true
+        } else if bytes.starts_with(x, s("--profile")) {
+            a.what = x
+        } else if (is(x, "-o") || is(x, "--kind") || is(x, "--label") || is(x, "--by") || is(x, "--top") || is(x, "--tolerance") || is(x, "--hz")) && !has_next {
+            let mut msg = x.copy()
+            bytes.append(inout msg, s(" needs a value"))
+            die(msg, 2)
+        } else if is(x, "-o") {
+            a.out = argv[i]
+            i += 1
+        } else if is(x, "--kind") {
+            a.kind = argv[i]
+            i += 1
+        } else if is(x, "--label") {
+            a.o.label = argv[i]
+            i += 1
+        } else if is(x, "--by") {
+            a.o.by = argv[i]
+            i += 1
+        } else if is(x, "--top") {
+            a.o.top = number(argv[i], "--top") as usize
+            i += 1
+        } else if is(x, "--tolerance") {
+            a.tol = number(argv[i], "--tolerance") as i64
+            i += 1
+        } else if is(x, "--hz") {
+            number(argv[i], "--hz")
+            a.hz = argv[i]
+            i += 1
+        } else if x.len() > 1 && x[0] == 45 {
+            let mut msg = s("unknown option ")
+            bytes.append(inout msg, x)
+            die(msg, 2)
+        } else if a.cmd.len() == 0 {
+            a.cmd = x
+        } else {
+            a.files.push(x)
+        }
+    }
+    a
+}
+
+fn need_files(a: Args, n: usize) uses io {
+    if a.files.len() != n {
+        let mut msg = s("`")
+        bytes.append(inout msg, a.cmd)
+        bytes.append(inout msg, s("` takes "))
+        bytes.append(inout msg, bytes.from_u64(n as u64))
+        bytes.append(inout msg, s(" profile file(s); see --help"))
+        die(msg, 2)
+    }
+}
+
+fn write_out(path: List[u8], data: List[u8]) uses io, fs {
+    match fs.write(path, data) {
+        Ok(_) => {}
+        Err(e) => {
+            let mut msg = s("cannot write ")
+            bytes.append(inout msg, path)
+            die(msg, 2)
+        }
+    }
+}
+
+/// The compiler for `record`: $EIDERC, else the checkout's target/eiderc-next, else `eiderc`.
+fn eiderc() -> List[u8] uses io, fs {
+    match env.get(s("EIDERC")) {
+        Some(x) => { if x.len() > 0 { return x } }
+        None => {}
+    }
+    match env.get(s("EIDER_LANG")) {
+        Some(l) => {
+            let c = fs.join(l, s("target/eiderc-next"))
+            if fs.exists(c) { return c }
+        }
+        None => {}
+    }
+    s("eiderc")
+}
+
+/// `record`: build the program with --profile into a scratch directory, run it with the
+/// profiling environment, report where the profile went; exits with the program's code.
+fn record(a: Args) uses io, fs, net, clock {
+    if a.rest.len() == 0 { die(s("`record` needs `-- <prog.ei> [args...]`"), 2) }
+    let prog = a.rest[0]
+    let mut out = a.out.copy()
+    if out.len() == 0 { out = s("eider.prof") }
+    let out_abs = match fs.absolute(out) {
+        Ok(x) => x
+        Err(_) => out
+    }
+    let mut dir = s("/tmp")
+    match env.get(s("TMPDIR")) {
+        Some(t) => { if t.len() > 0 { dir = t } }
+        None => {}
+    }
+    let mut sub = s("eider-profiler-")
+    bytes.append(inout sub, bytes.from_i64(proc_stamp()))
+    let work = fs.join(dir, sub)
+    match fs.mkdir_all(work) {
+        Ok(_) => {}
+        Err(e) => { die(s("cannot make a scratch directory"), 2) }
+    }
+    let exe = fs.join(work, s("prog"))
+    let mut build: List[List[u8]] = List.new()
+    build.push(eiderc())
+    build.push(s("build"))
+    build.push(prog)
+    if a.what.len() > 0 { build.push(a.what) } else { build.push(s("--profile")) }
+    build.push(s("-o"))
+    build.push(exe)
+    let code = proc.run(build).unwrap_or(127)
+    if code != 0 {
+        fs.remove_all(work)
+        die(s("building the program with --profile failed (set EIDERC to an eiderc that knows --profile)"), 2)
+    }
+    let mut run: List[List[u8]] = List.new()
+    run.push(s("env"))
+    let mut pe = s("EIDER_PROF=")
+    bytes.append(inout pe, out_abs)
+    run.push(pe)
+    if a.hz.len() > 0 {
+        let mut h = s("EIDER_PROF_HZ=")
+        bytes.append(inout h, a.hz)
+        run.push(h)
+    }
+    if a.wall { run.push(s("EIDER_PROF_CLOCK=wall")) }
+    run.push(exe)
+    for i in 1..a.rest.len() { run.push(a.rest[i]) }
+    let rc = proc.run(run).unwrap_or(127)
+    fs.remove_all(work)
+    let mut msg = s("eider-profiler: wrote ")
+    bytes.append(inout msg, out)
+    bytes.append(inout msg, s(" (eider-profiler report "))
+    bytes.append(inout msg, out)
+    bytes.append(inout msg, s(")"))
+    io.errln(msg)
+    env.exit(rc)
+}
+
+/// A number unique enough for a scratch directory name: this process's start time in ns.
+fn proc_stamp() -> i64 uses io, fs {
+    match fs.read(s("/proc/self/stat")) {
+        Ok(t) => {
+            // the pid is the first field
+            let f = bytes.split(t, 32)
+            if f.len() > 0 { return bytes.parse_u64(f[0]).unwrap_or(0) as i64 }
+        }
+        Err(_) => {}
+    }
+    0
+}
+
+fn main() uses io, fs, net, clock {
+    let a = parse_args()
+    if a.cmd.len() == 0 {
+        io.err(usage())
+        env.exit(2)
+    }
+    if is(a.cmd, "report") {
+        need_files(a, 1)
+        let p = load(a.files[0])
+        if a.json { io.out(rep.as_json(p, a.o)) } else { io.out(rep.text(p, a.o)) }
+    } else if is(a.cmd, "flame") {
+        need_files(a, 1)
+        if a.out.len() == 0 { die(s("`flame` needs -o <out.html>"), 2) }
+        let p = load(a.files[0])
+        if fl.kinds(p).len() == 0 { die(s("the profile has no stacks"), 1) }
+        write_out(a.out, fl.html(p, a.kind, a.o.label))
+    } else if is(a.cmd, "folded") {
+        need_files(a, 1)
+        let p = load(a.files[0])
+        let mut k = a.kind.copy()
+        if k.len() == 0 { k = s("cpu") }
+        let f = fl.folded(p, k, a.o.label, a.lines)
+        if a.out.len() > 0 { write_out(a.out, f) } else { io.out(f) }
+    } else if is(a.cmd, "diff") {
+        need_files(a, 2)
+        let pa = load(a.files[0])
+        let pb = load(a.files[1])
+        if a.json { io.out(rep.diff_json(pa, pb, a.tol)) } else { io.out(rep.diff_text(pa, pb, a.o, a.check, a.tol)) }
+        if a.check && rep.any_regression(pa, pb, a.tol) { env.exit(1) }
+    } else if is(a.cmd, "record") {
+        record(a)
+    } else {
+        let mut msg = s("unknown command ")
+        bytes.append(inout msg, a.cmd)
+        bytes.append(inout msg, s("; see --help"))
+        die(msg, 2)
+    }
+}

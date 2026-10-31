@@ -1,0 +1,42 @@
+eider-profiler: warning: tests/fixtures/small2.prof was written by Eider 0.2.0, this eider-profiler goes with Eider 0.1.x
+eider-profiler diff: svc.ei -> svc.ei
+
+Totals (gated: deterministic counts that `diff --check` fails on)
+-----------------------------------------------------------------
+metric                   a          b   change  gated
+cpu samples            150        120   -20.0%
+allocations           5801       5900    +1.7%  yes
+bytes allocated    2.1 MiB    2.1 MiB    +2.1%  yes
+peak heap         11.7 KiB   12.2 KiB    +4.2%
+cow count              400        900  +125.0%  yes
+cow bytes          1.1 MiB    2.6 MiB  +125.0%  yes
+copy count             900        900        =  yes
+grow count             120        120        =  yes
+grow bytes       293.0 KiB  293.0 KiB        =  yes
+rehash count             3          0  -100.0%  yes
+rehash bytes       5.9 KiB        0 B  -100.0%  yes
+drop count              44          0  -100.0%  yes
+lock wait           3.5 ms       0 ns  -100.0%
+recv wait         900.0 ms       0 ns  -100.0%
+
+Self time share by function (largest changes)
+---------------------------------------------
+    a      b  function
+40.0%  75.0%  bytes.append
+40.0%  25.0%  get_todo
+13.3%   0.0%  Store.lock
+ 6.7%   0.0%  main
+ 0.0%   0.0%  list_todos
+
+Bytes allocated by site (largest changes)
+-----------------------------------------
+        a          b   change  site
+  1.5 MiB    1.6 MiB    +3.1%  bytes.append at std/bytes.ei:95
+  4.0 KiB        0 B  -100.0%  main at svc.ei:9
+585.9 KiB  585.9 KiB        =  get_todo at svc.ei:42
+
+Copy-on-write bytes by site (largest changes)
+---------------------------------------------
+      a        b   change  site
+1.1 MiB  2.6 MiB  +125.0%  list_todos at svc.ei:52
+exit 0

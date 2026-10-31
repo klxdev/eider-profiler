@@ -1,0 +1,24 @@
+// A contended Mutex: eight threads update one counter, each holding the lock while it works,
+// so they mostly wait for each other (`bump`'s update is the hot lock).
+fn work(n: i64) -> i64 {
+    let mut s: i64 = 0
+    for i in 0..n { s = (s + i * 13) % 1000003 }
+    s
+}
+
+fn bump(m: Mutex[i64], rounds: i64) {
+    for r in 0..rounds {
+        m.update(|v: i64| -> i64 { v + work(30000) % 2 + 1 })
+    }
+}
+
+fn main() uses io, threads {
+    let m: Mutex[i64] = Mutex.new(0)
+    let mut ts: List[Task[()]] = List.new()
+    for k in 0..8 {
+        let mm = m
+        ts.push(spawn(|| bump(mm, 60)))
+    }
+    for t in ts { t.join() }
+    print(m.get())
+}

@@ -1,0 +1,778 @@
+// prof_report: what a profile says, as tables (`report`), as JSON (`report --json`), and
+// against another profile (`diff`).
+
+import "core/sys"
+import "std/bytes"
+import "std/sort"
+import "json"
+import "prof_model.ei" as m
+import "prof_text.ei" as tx
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
+
+/// What to show: at most `top` rows per table, only stacks whose labels match `label`
+/// (`key=value`, or empty), and the cpu split by label key `by` (empty: none).
+pub type Opts = { top: usize, label: List[u8], by: List[u8] }
+
+pub fn opts() -> Opts { Opts(15, List.new(), List.new()) }
+
+// ---- analysis
+
+/// A function's share of a stack kind: `self` where it is the innermost frame, `total`
+/// where it is anywhere (counted once per stack); n samples or events, w their weight.
+pub type FnStat = { func: u32, self_n: i64, self_w: i64, total_n: i64, total_w: i64 }
+
+pub fn fn_stats(p: m.Profile, kind: str, want: List[u8]) -> List[FnStat] {
+    let mut at: Map[u32, usize] = Map.new()
+    let mut out: List[FnStat] = List.new()
+    for st in p.stacks {
+        if !is(st.kind, kind) || !m.label_matches(p, st.label, want) || st.frames.len() == 0 { continue }
+        let mut seen: Map[u32, bool] = Map.new()
+        for k in 0..st.frames.len() {
+            let f = st.frames[k].func
+            if f == m.TRUNC { continue }
+            let mut i: usize = 0
+            match at.get(f) {
+                Some(x) => { i = x }
+                None => {
+                    out.push(FnStat(f, 0, 0, 0, 0))
+                    i = out.len() - 1
+                    at.insert(f, i)
+                }
+            }
+            if !seen.contains(f) {
+                seen.insert(f, true)
+                out[i].total_n += st.n
+                out[i].total_w += st.w
+            }
+            if k + 1 == st.frames.len() {
+                out[i].self_n += st.n
+                out[i].self_w += st.w
+            }
+        }
+    }
+    sort.sort_by(out, |a: FnStat, b: FnStat| -> Ordering {
+        if a.self_w != b.self_w { return b.self_w.compare(a.self_w) }
+        if a.total_w != b.total_w { return b.total_w.compare(a.total_w) }
+        a.func.compare(b.func)
+    })
+}
+
+/// fn_stats ordered by total.
+pub fn by_total(xs: List[FnStat]) -> List[FnStat] {
+    sort.sort_by(xs, |a: FnStat, b: FnStat| -> Ordering {
+        if a.total_w != b.total_w { return b.total_w.compare(a.total_w) }
+        a.func.compare(b.func)
+    })
+}
+
+/// The innermost positions of a stack kind: (function, line) with their samples.
+pub type LineStat = { func: u32, line: i64, n: i64, w: i64 }
+
+pub fn hot_lines(p: m.Profile, kind: str, want: List[u8]) -> List[LineStat] {
+    let mut at: Map[u64, usize] = Map.new()
+    let mut out: List[LineStat] = List.new()
+    for st in p.stacks {
+        if !is(st.kind, kind) || !m.label_matches(p, st.label, want) || st.frames.len() == 0 { continue }
+        let f = st.frames[st.frames.len() - 1]
+        let key = (f.func as u64) * 4294967296 + (f.line as u64)
+        match at.get(key) {
+            Some(i) => {
+                out[i].n += st.n
+                out[i].w += st.w
+            }
+            None => {
+                out.push(LineStat(f.func, f.line, st.n, st.w))
+                at.insert(key, out.len() - 1)
+            }
+        }
+    }
+    sort.sort_by(out, |a: LineStat, b: LineStat| -> Ordering {
+        if a.w != b.w { return b.w.compare(a.w) }
+        a.func.compare(b.func)
+    })
+}
+
+/// The sites of one kind, heaviest first (by `w`, then `n`).
+pub fn sites(p: m.Profile, kind: str) -> List[m.Site] {
+    let mut out: List[m.Site] = List.new()
+    for x in p.sites {
+        if is(x.kind, kind) { out.push(x) }
+    }
+    sort.sort_by(out, |a: m.Site, b: m.Site| -> Ordering {
+        if a.w != b.w { return b.w.compare(a.w) }
+        if a.n != b.n { return b.n.compare(a.n) }
+        a.func.compare(b.func)
+    })
+}
+
+/// The sites of one kind by count.
+pub fn sites_by_n(p: m.Profile, kind: str) -> List[m.Site] {
+    sort.sort_by(sites(p, kind), |a: m.Site, b: m.Site| -> Ordering {
+        if a.n != b.n { return b.n.compare(a.n) }
+        if a.w != b.w { return b.w.compare(a.w) }
+        a.func.compare(b.func)
+    })
+}
+
+/// Allocation sites still holding memory (live_n > 0), most bytes first.
+pub fn live_sites(p: m.Profile) -> List[m.Site] {
+    let mut out: List[m.Site] = List.new()
+    for x in sites(p, "alloc") {
+        if x.live_n > 0 { out.push(x) }
+    }
+    sort.sort_by(out, |a: m.Site, b: m.Site| -> Ordering {
+        if a.live_w != b.live_w { return b.live_w.compare(a.live_w) }
+        a.func.compare(b.func)
+    })
+}
+
+/// (count, weight) of every site of a kind.
+pub fn kind_total(p: m.Profile, kind: str) -> (i64, i64) {
+    let mut n: i64 = 0
+    let mut w: i64 = 0
+    for x in p.sites {
+        if is(x.kind, kind) {
+            n += x.n
+            w += x.w
+        }
+    }
+    (n, w)
+}
+
+/// (samples, weight) of the stacks of a kind that match `want`.
+pub fn stack_total(p: m.Profile, kind: str, want: List[u8]) -> (i64, i64) {
+    let mut n: i64 = 0
+    let mut w: i64 = 0
+    for st in p.stacks {
+        if is(st.kind, kind) && m.label_matches(p, st.label, want) {
+            n += st.n
+            w += st.w
+        }
+    }
+    (n, w)
+}
+
+/// The cpu samples per value of label `key` (no value: "(none)"), most first.
+pub type ByLabel = { value: List[u8], n: i64, w: i64, top_fn: u32, top_n: i64 }
+
+pub fn by_label(p: m.Profile, key: List[u8], kind: str) -> List[ByLabel] {
+    let mut at: Map[u64, usize] = Map.new()
+    let mut vals: List[List[u8]] = List.new()
+    let mut out: List[ByLabel] = List.new()
+    // per value, the self samples of each function (to name the top one)
+    let mut selfs: List[Map[u32, i64]] = List.new()
+    for st in p.stacks {
+        if !is(st.kind, kind) || st.frames.len() == 0 { continue }
+        let v = m.label_value(p, st.label, key).unwrap_or(s("(none)"))
+        let mut i = out.len()
+        for j in 0..vals.len() {
+            if bytes.eq(vals[j], v) { i = j }
+        }
+        if i == out.len() {
+            vals.push(v)
+            out.push(ByLabel(v, 0, 0, 0, 0))
+            selfs.push(Map.new())
+        }
+        out[i].n += st.n
+        out[i].w += st.w
+        let f = st.frames[st.frames.len() - 1].func
+        let c = selfs[i].get(f).unwrap_or(0) + st.n
+        selfs[i].insert(f, c)
+        if c > out[i].top_n {
+            out[i].top_n = c
+            out[i].top_fn = f
+        }
+    }
+    sort.sort_by(out, |a: ByLabel, b: ByLabel| -> Ordering {
+        if a.w != b.w { return b.w.compare(a.w) }
+        bytes.compare(a.value, b.value).compare(0)
+    })
+}
+
+// ---- the text report
+
+fn header(p: m.Profile) -> List[u8] {
+    let mut o = s("eider-profiler report: ")
+    bytes.append(inout o, p.program)
+    bytes.append(inout o, s(" ("))
+    if p.version.len() > 0 {
+        bytes.append(inout o, s("Eider "))
+        bytes.append(inout o, p.version)
+        bytes.append(inout o, s(", "))
+    }
+    bytes.append(inout o, s("written at "))
+    bytes.append(inout o, p.reason)
+    bytes.append(inout o, s(", "))
+    bytes.append(inout o, tx.dur(p.duration_ns))
+    bytes.append(inout o, s(" recorded; profiled: "))
+    bytes.append(inout o, p.what)
+    bytes.append(inout o, s("; clock "))
+    bytes.append(inout o, p.clock)
+    bytes.append(inout o, s(" at "))
+    bytes.append(inout o, bytes.from_i64(p.hz))
+    bytes.append(inout o, s(" Hz)\n"))
+    bytes.append(inout o, s("samples: "))
+    bytes.append(inout o, tx.num(p.sum.samples))
+    if p.sum.dropped > 0 {
+        bytes.append(inout o, s(" (+"))
+        bytes.append(inout o, tx.num(p.sum.dropped))
+        bytes.append(inout o, s(" dropped)"))
+    }
+    bytes.append(inout o, s(" = "))
+    bytes.append(inout o, tx.dur(p.sum.samples * p.period_ns))
+    bytes.append(inout o, s(" of "))
+    bytes.append(inout o, p.clock)
+    bytes.append(inout o, s(" time; threads: "))
+    bytes.append(inout o, tx.num(p.sum.threads_started))
+    bytes.append(inout o, s(" started, "))
+    bytes.append(inout o, tx.num(p.sum.threads_exited))
+    bytes.append(inout o, s(" exited\n"))
+    o
+}
+
+fn fn_table(p: m.Profile, xs: List[FnStat], total: i64, top: usize, wcol: str, wtext: fn(i64) -> List[u8]) -> List[u8] {
+    let mut hd = s("> self%|")
+    bytes.append(inout hd, s(wcol))
+    bytes.append(inout hd, s("|> total%|> total|function|file"))
+    let mut t = tx.table_of(hd)
+    for i in 0..xs.len() {
+        if i >= top { break }
+        let x = xs[i]
+        t.rows.push(tx.r6(tx.pct(x.self_w, total), wtext(x.self_w), tx.pct(x.total_w, total), wtext(x.total_w), m.fn_name(p, x.func), m.fn_file(p, x.func)))
+    }
+    tx.render(t)
+}
+
+fn site_table(p: m.Profile, xs: List[m.Site], top: usize, what: str, wtext: fn(i64) -> List[u8]) -> List[u8] {
+    let mut hd = s("> count|")
+    bytes.append(inout hd, s(what))
+    bytes.append(inout hd, s("|function|at"))
+    let mut t = tx.table_of(hd)
+    for i in 0..xs.len() {
+        if i >= top { break }
+        let x = xs[i]
+        t.rows.push(tx.r4(tx.num(x.n), wtext(x.w), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+    }
+    tx.render(t)
+}
+
+fn wait_table(p: m.Profile, xs: List[m.Site], top: usize) -> List[u8] {
+    let mut t = tx.table("> waits|> total|> mean|function|at")
+    for i in 0..xs.len() {
+        if i >= top { break }
+        let x = xs[i]
+        let mean: i64 = if x.n > 0 { x.w / x.n } else { 0 }
+        t.rows.push(tx.r5(tx.num(x.n), tx.dur(x.w), tx.dur(mean), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+    }
+    tx.render(t)
+}
+
+fn none_line() -> List[u8] { s("(none)\n") }
+
+/// The text report (see README.md for what each table means).
+pub fn text(p: m.Profile, o: Opts) -> List[u8] {
+    let mut out = header(p)
+    if o.label.len() > 0 {
+        bytes.append(inout out, s("only stacks labelled "))
+        bytes.append(inout out, o.label)
+        out.push(10)
+    }
+    // cpu
+    let (cn, cw) = stack_total(p, "cpu", o.label)
+    bytes.append(inout out, tx.title("Top functions by self time (cpu samples)"))
+    if cn == 0 {
+        bytes.append(inout out, none_line())
+    } else {
+        let fs = fn_stats(p, "cpu", o.label)
+        bytes.append(inout out, fn_table(p, fs, cw, o.top, "> self", |w: i64| -> List[u8] tx.dur(w)))
+        bytes.append(inout out, tx.title("Top functions by total time (cpu samples)"))
+        bytes.append(inout out, fn_table(p, by_total(fs), cw, o.top, "> self", |w: i64| -> List[u8] tx.dur(w)))
+        bytes.append(inout out, tx.title("Hot lines (innermost frame)"))
+        let ls = hot_lines(p, "cpu", o.label)
+        let mut t = tx.table("> self%|> samples|function|at")
+        for i in 0..ls.len() {
+            if i >= o.top { break }
+            let x = ls[i]
+            t.rows.push(tx.r4(tx.pct(x.w, cw), tx.num(x.n), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    if o.by.len() > 0 {
+        let mut ttl = s("CPU by label `")
+        bytes.append(inout ttl, o.by)
+        ttl.push(96)
+        bytes.append(inout out, s("\n"))
+        bytes.append(inout out, ttl)
+        out.push(10)
+        for k in 0..ttl.len() { out.push(45) }
+        out.push(10)
+        let mut t = tx.table("> share|> samples|value|hottest function")
+        for x in by_label(p, o.by, "cpu") {
+            t.rows.push(tx.r4(tx.pct(x.w, cw), tx.num(x.n), x.value, m.fn_name(p, x.top_fn)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    // memory
+    let (an, aw) = kind_total(p, "alloc")
+    bytes.append(inout out, tx.title("Allocation sites (by bytes)"))
+    if an == 0 {
+        bytes.append(inout out, none_line())
+    } else {
+        let mut sm = s("")
+        bytes.append(inout sm, tx.num(an))
+        bytes.append(inout sm, s(" allocations, "))
+        bytes.append(inout sm, tx.size(aw))
+        bytes.append(inout sm, s("; peak heap "))
+        bytes.append(inout sm, tx.size(p.sum.peak))
+        bytes.append(inout sm, s(", live at the end "))
+        bytes.append(inout sm, tx.size(p.sum.live))
+        bytes.append(inout sm, s(" in "))
+        bytes.append(inout sm, tx.num(p.sum.live_n))
+        bytes.append(inout sm, s(" blocks\n"))
+        bytes.append(inout out, sm)
+        let mut t = tx.table("> allocs|> bytes|> live|function|at")
+        let xs = sites(p, "alloc")
+        for i in 0..xs.len() {
+            if i >= o.top { break }
+            let x = xs[i]
+            t.rows.push(tx.r5(tx.num(x.n), tx.size(x.w), tx.size(x.live_w), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    let (wn, ww) = kind_total(p, "cow")
+    bytes.append(inout out, tx.title("Copy-on-write unshares (a shared String/List/Map/Box copied before a write)"))
+    if wn == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, site_table(p, sites(p, "cow"), o.top, "> bytes copied", |w: i64| -> List[u8] tx.size(w))) }
+    bytes.append(inout out, tx.title(".copy() calls"))
+    let (yn, yw) = kind_total(p, "copy")
+    if yn == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, site_table(p, sites_by_n(p, "copy"), o.top, "> bytes", |w: i64| -> List[u8] tx.size(w))) }
+    bytes.append(inout out, tx.title("List growth and Map rehashes"))
+    let mut gs = sites(p, "grow")
+    for x in sites(p, "rehash") { gs.push(x) }
+    if gs.len() == 0 {
+        bytes.append(inout out, none_line())
+    } else {
+        let gs2 = sort.sort_by(gs, |a: m.Site, b: m.Site| -> Ordering b.w.compare(a.w))
+        let mut t = tx.table("kind|> count|> bytes|function|at")
+        for i in 0..gs2.len() {
+            if i >= o.top { break }
+            let x = gs2[i]
+            t.rows.push(tx.r5(x.kind, tx.num(x.n), tx.size(x.w), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    bytes.append(inout out, tx.title("Drop calls (types with their own Drop)"))
+    let ds = sites_by_n(p, "drop")
+    if ds.len() == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, site_table(p, ds, o.top, "> bytes", |w: i64| -> List[u8] tx.size(w))) }
+    // concurrency
+    bytes.append(inout out, tx.title("Lock waits (Mutex and runtime locks, contended only)"))
+    let lk = sites(p, "lock")
+    if lk.len() == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, wait_table(p, lk, o.top)) }
+    bytes.append(inout out, tx.title("Channel receive waits (Chan.recv, sync.Lock)"))
+    let rv = sites(p, "recv")
+    if rv.len() == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, wait_table(p, rv, o.top)) }
+    let rf = sites_by_n(p, "ref")
+    if rf.len() > 0 {
+        bytes.append(inout out, tx.title("Ref conflicts (the program trapped)"))
+        bytes.append(inout out, site_table(p, rf, o.top, "> -", |w: i64| -> List[u8] s("")))
+    }
+    let sp = sites_by_n(p, "spawn")
+    if sp.len() > 0 {
+        bytes.append(inout out, tx.title("Threads spawned"))
+        let mut t = tx.table("> spawns|function|at")
+        for i in 0..sp.len() {
+            if i >= o.top { break }
+            let x = sp[i]
+            t.rows.push(tx.r3(tx.num(x.n), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    // heap over time
+    if p.heap.len() > 1 {
+        bytes.append(inout out, tx.title("Heap over time"))
+        let mut t = tx.table("> at|> live|> peak|> allocations|> threads")
+        let n = p.heap.len()
+        let mut k: usize = 0
+        let step: usize = if n > 10 { n / 10 } else { 1 }
+        while k < n {
+            let h = p.heap[k]
+            t.rows.push(tx.r5(tx.dur(h.ns), tx.size(h.live), tx.size(h.peak), tx.num(h.allocs), tx.num(h.threads)))
+            if k + 1 < n && k + step >= n { k = n - 1 } else { k += step }
+        }
+        bytes.append(inout out, tx.render(t))
+    }
+    // leaks
+    if an > 0 {
+        let lv = live_sites(p)
+        if p.clean_exit {
+            bytes.append(inout out, tx.title("Leaks at exit (allocated, never freed, after main returned)"))
+            if lv.len() == 0 {
+                bytes.append(inout out, s("none: every allocation was freed\n"))
+            } else {
+                let mut t = tx.table("> blocks|> bytes|function|at")
+                for i in 0..lv.len() {
+                    if i >= o.top { break }
+                    let x = lv[i]
+                    t.rows.push(tx.r4(tx.num(x.live_n), tx.size(x.live_w), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+                }
+                bytes.append(inout out, tx.render(t))
+            }
+        } else if lv.len() > 0 {
+            bytes.append(inout out, tx.title("Live heap by allocation site (the program was still running)"))
+            let mut t = tx.table("> blocks|> bytes|function|at")
+            for i in 0..lv.len() {
+                if i >= o.top { break }
+                let x = lv[i]
+                t.rows.push(tx.r4(tx.num(x.live_n), tx.size(x.live_w), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+            }
+            bytes.append(inout out, tx.render(t))
+        }
+    }
+    out
+}
+
+// ---- JSON
+
+fn jstr(inout o: List[u8], v: List[u8]) { json.quote_into(inout o, v) }
+fn jkey(inout o: List[u8], k: str) {
+    json.quote_into(inout o, s(k))
+    o.push(58)
+}
+fn jint(inout o: List[u8], k: str, v: i64) {
+    jkey(inout o, k)
+    bytes.append(inout o, bytes.from_i64(v))
+}
+
+fn jsites(inout o: List[u8], p: m.Profile, xs: List[m.Site], top: usize, live: bool) {
+    o.push(91)
+    for i in 0..xs.len() {
+        if i >= top { break }
+        if i > 0 { o.push(44) }
+        let x = xs[i]
+        o.push(123)
+        jkey(inout o, "function")
+        jstr(inout o, m.fn_name(p, x.func))
+        o.push(44)
+        jkey(inout o, "at")
+        jstr(inout o, m.position(p, x.func, x.line))
+        o.push(44)
+        jint(inout o, "count", x.n)
+        o.push(44)
+        jint(inout o, "weight", x.w)
+        if live {
+            o.push(44)
+            jint(inout o, "live_blocks", x.live_n)
+            o.push(44)
+            jint(inout o, "live_bytes", x.live_w)
+        }
+        o.push(125)
+    }
+    o.push(93)
+}
+
+/// The report as one JSON object (README.md "JSON output").
+pub fn as_json(p: m.Profile, o: Opts) -> List[u8] {
+    let mut out = s("{")
+    jkey(inout out, "program")
+    jstr(inout out, p.program)
+    out.push(44)
+    jkey(inout out, "version")
+    jstr(inout out, p.version)
+    out.push(44)
+    jkey(inout out, "reason")
+    jstr(inout out, p.reason)
+    out.push(44)
+    jkey(inout out, "clock")
+    jstr(inout out, p.clock)
+    out.push(44)
+    jint(inout out, "duration_ns", p.duration_ns)
+    out.push(44)
+    jint(inout out, "period_ns", p.period_ns)
+    out.push(44)
+    jkey(inout out, "summary")
+    out.push(123)
+    jint(inout out, "samples", p.sum.samples)
+    out.push(44)
+    jint(inout out, "dropped", p.sum.dropped)
+    out.push(44)
+    jint(inout out, "allocs", p.sum.allocs)
+    out.push(44)
+    jint(inout out, "alloc_bytes", p.sum.alloc_bytes)
+    out.push(44)
+    jint(inout out, "peak", p.sum.peak)
+    out.push(44)
+    jint(inout out, "live", p.sum.live)
+    out.push(44)
+    jint(inout out, "threads_started", p.sum.threads_started)
+    for k in ["cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn"] {
+        let (n, w) = kind_total(p, k)
+        out.push(44)
+        let mut kn = s(k)
+        bytes.append(inout kn, s("_count"))
+        jstr(inout out, kn)
+        out.push(58)
+        bytes.append(inout out, bytes.from_i64(n))
+        out.push(44)
+        let mut kw = s(k)
+        bytes.append(inout kw, s("_weight"))
+        jstr(inout out, kw)
+        out.push(58)
+        bytes.append(inout out, bytes.from_i64(w))
+    }
+    out.push(125)
+    out.push(44)
+    jkey(inout out, "functions")
+    out.push(91)
+    let fs = fn_stats(p, "cpu", o.label)
+    for i in 0..fs.len() {
+        if i >= o.top { break }
+        if i > 0 { out.push(44) }
+        let x = fs[i]
+        out.push(123)
+        jkey(inout out, "function")
+        jstr(inout out, m.fn_name(p, x.func))
+        out.push(44)
+        jkey(inout out, "file")
+        jstr(inout out, m.fn_file(p, x.func))
+        out.push(44)
+        jint(inout out, "self_samples", x.self_n)
+        out.push(44)
+        jint(inout out, "total_samples", x.total_n)
+        out.push(44)
+        jint(inout out, "self_ns", x.self_w)
+        out.push(44)
+        jint(inout out, "total_ns", x.total_w)
+        out.push(125)
+    }
+    out.push(93)
+    for k in ["alloc", "cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn"] {
+        out.push(44)
+        let mut kk = s("sites_")
+        bytes.append(inout kk, s(k))
+        jstr(inout out, kk)
+        out.push(58)
+        jsites(inout out, p, sites(p, k), o.top, is(s(k), "alloc"))
+    }
+    out.push(44)
+    jkey(inout out, "leaks")
+    if p.clean_exit { jsites(inout out, p, live_sites(p), o.top, true) } else { bytes.append(inout out, s("null")) }
+    if o.by.len() > 0 {
+        out.push(44)
+        jkey(inout out, "by_label")
+        out.push(91)
+        let bl = by_label(p, o.by, "cpu")
+        for i in 0..bl.len() {
+            if i > 0 { out.push(44) }
+            out.push(123)
+            jkey(inout out, "value")
+            jstr(inout out, bl[i].value)
+            out.push(44)
+            jint(inout out, "samples", bl[i].n)
+            out.push(44)
+            jkey(inout out, "hottest")
+            jstr(inout out, m.fn_name(p, bl[i].top_fn))
+            out.push(125)
+        }
+        out.push(93)
+    }
+    out.push(125)
+    out.push(10)
+    out
+}
+
+// ---- diff
+
+/// One compared quantity: `gated` ones are deterministic for a deterministic program
+/// (counts of allocations and copies, not time), which `diff --check` fails on.
+pub type Metric = { name: List[u8], a: i64, b: i64, gated: bool, bytes: bool, ns: bool }
+
+pub fn metrics(a: m.Profile, b: m.Profile) -> List[Metric] {
+    let mut out: List[Metric] = List.new()
+    out.push(Metric(s("cpu samples"), a.sum.samples, b.sum.samples, false, false, false))
+    out.push(Metric(s("allocations"), a.sum.allocs, b.sum.allocs, true, false, false))
+    out.push(Metric(s("bytes allocated"), a.sum.alloc_bytes, b.sum.alloc_bytes, true, true, false))
+    out.push(Metric(s("peak heap"), a.sum.peak, b.sum.peak, false, true, false))
+    for k in ["cow", "copy", "grow", "rehash", "drop"] {
+        let (an, aw) = kind_total(a, k)
+        let (bn, bw) = kind_total(b, k)
+        let mut nm = s(k)
+        bytes.append(inout nm, s(" count"))
+        out.push(Metric(nm, an, bn, true, false, false))
+        if !is(s(k), "drop") && !is(s(k), "copy") {
+            let mut nb = s(k)
+            bytes.append(inout nb, s(" bytes"))
+            out.push(Metric(nb, aw, bw, true, true, false))
+        }
+    }
+    for k in ["lock", "recv"] {
+        let (an, aw) = kind_total(a, k)
+        let (bn, bw) = kind_total(b, k)
+        let mut nm = s(k)
+        bytes.append(inout nm, s(" wait"))
+        out.push(Metric(nm, aw, bw, false, false, true))
+    }
+    out
+}
+
+fn change(a: i64, b: i64) -> List[u8] {
+    if a == b { return s("=") }
+    if a == 0 { return s("new") }
+    let d = b - a
+    let mut o: List[u8] = List.new()
+    if d > 0 { o.push(43) }
+    bytes.append(inout o, tx.pct(d, a))
+    o
+}
+
+/// Self share per function name (functions are matched by name: ids differ between builds).
+fn shares(p: m.Profile) -> Map[List[u8], i64] {
+    let mut out: Map[List[u8], i64] = Map.new()
+    for x in fn_stats(p, "cpu", List.new()) {
+        let n = m.fn_name(p, x.func)
+        let c = out.get(n).unwrap_or(0)
+        out.insert(n, c + x.self_w)
+    }
+    out
+}
+
+/// Bytes per allocation site `name at file:line`.
+fn site_bytes(p: m.Profile, kind: str) -> Map[List[u8], i64] {
+    let mut out: Map[List[u8], i64] = Map.new()
+    for x in sites(p, kind) {
+        let mut k = m.fn_name(p, x.func)
+        bytes.append(inout k, s(" at "))
+        bytes.append(inout k, m.position(p, x.func, x.line))
+        let c = out.get(k).unwrap_or(0)
+        out.insert(k, c + x.w)
+    }
+    out
+}
+
+pub type DiffRow = { name: List[u8], a: i64, b: i64 }
+
+fn diff_rows(a: Map[List[u8], i64], b: Map[List[u8], i64]) -> List[DiffRow] {
+    let mut out: List[DiffRow] = List.new()
+    for (k, v) in a { out.push(DiffRow(k, v, b.get(k).unwrap_or(0))) }
+    for (k, v) in b {
+        if !a.contains(k) { out.push(DiffRow(k, 0, v)) }
+    }
+    sort.sort_by(out, |x: DiffRow, y: DiffRow| -> Ordering {
+        let dx = if x.b > x.a { x.b - x.a } else { x.a - x.b }
+        let dy = if y.b > y.a { y.b - y.a } else { y.a - y.b }
+        if dx != dy { return dy.compare(dx) }
+        bytes.compare(x.name, y.name).compare(0)
+    })
+}
+
+/// Whether metric x got worse by more than `tol_pct` percent (a gated metric only).
+pub fn regressed(x: Metric, tol_pct: i64) -> bool {
+    if !x.gated || x.b <= x.a { return false }
+    if x.a == 0 { return x.b > 0 }
+    (x.b - x.a) * 100 > x.a * tol_pct
+}
+
+/// `diff a b` as text; with `check`, the gated metrics that regressed by more than `tol_pct`
+/// are listed at the end as `REGRESSION` lines.
+pub fn diff_text(a: m.Profile, b: m.Profile, o: Opts, check: bool, tol_pct: i64) -> List[u8] {
+    let mut out = s("eider-profiler diff: ")
+    bytes.append(inout out, a.program)
+    bytes.append(inout out, s(" -> "))
+    bytes.append(inout out, b.program)
+    out.push(10)
+    bytes.append(inout out, tx.title("Totals (gated: deterministic counts that `diff --check` fails on)"))
+    let mut t = tx.table("metric|> a|> b|> change|gated")
+    let ms = metrics(a, b)
+    for x in ms {
+        let fa = if x.bytes { tx.size(x.a) } else if x.ns { tx.dur(x.a) } else { tx.num(x.a) }
+        let fb = if x.bytes { tx.size(x.b) } else if x.ns { tx.dur(x.b) } else { tx.num(x.b) }
+        let g = if x.gated { s("yes") } else { s("") }
+        t.rows.push(tx.r5(x.name, fa, fb, change(x.a, x.b), g))
+    }
+    bytes.append(inout out, tx.render(t))
+    let (an, aw) = stack_total(a, "cpu", List.new())
+    let (bn, bw) = stack_total(b, "cpu", List.new())
+    bytes.append(inout out, tx.title("Self time share by function (largest changes)"))
+    let rows = diff_rows(shares(a), shares(b))
+    let mut t2 = tx.table("> a|> b|function")
+    for i in 0..rows.len() {
+        if i >= o.top { break }
+        t2.rows.push(tx.r3(tx.pct(rows[i].a, aw), tx.pct(rows[i].b, bw), rows[i].name))
+    }
+    bytes.append(inout out, tx.render(t2))
+    bytes.append(inout out, tx.title("Bytes allocated by site (largest changes)"))
+    let r3 = diff_rows(site_bytes(a, "alloc"), site_bytes(b, "alloc"))
+    let mut t3 = tx.table("> a|> b|> change|site")
+    for i in 0..r3.len() {
+        if i >= o.top { break }
+        t3.rows.push(tx.r4(tx.size(r3[i].a), tx.size(r3[i].b), change(r3[i].a, r3[i].b), r3[i].name))
+    }
+    bytes.append(inout out, tx.render(t3))
+    bytes.append(inout out, tx.title("Copy-on-write bytes by site (largest changes)"))
+    let r4 = diff_rows(site_bytes(a, "cow"), site_bytes(b, "cow"))
+    let mut t4 = tx.table("> a|> b|> change|site")
+    for i in 0..r4.len() {
+        if i >= o.top { break }
+        t4.rows.push(tx.r4(tx.size(r4[i].a), tx.size(r4[i].b), change(r4[i].a, r4[i].b), r4[i].name))
+    }
+    bytes.append(inout out, tx.render(t4))
+    if check {
+        let mut bad = 0
+        for x in ms {
+            if regressed(x, tol_pct) {
+                bytes.append(inout out, s("REGRESSION "))
+                bytes.append(inout out, x.name)
+                bytes.append(inout out, s(": "))
+                bytes.append(inout out, tx.num(x.a))
+                bytes.append(inout out, s(" -> "))
+                bytes.append(inout out, tx.num(x.b))
+                bytes.append(inout out, s(" ("))
+                bytes.append(inout out, change(x.a, x.b))
+                bytes.append(inout out, s(", tolerance "))
+                bytes.append(inout out, tx.num(tol_pct))
+                bytes.append(inout out, s("%)\n"))
+                bad += 1
+            }
+        }
+        if bad == 0 { bytes.append(inout out, s("\ncheck: no gated metric grew by more than the tolerance\n")) }
+    }
+    out
+}
+
+/// `diff --json`: the totals as one JSON object.
+pub fn diff_json(a: m.Profile, b: m.Profile, tol_pct: i64) -> List[u8] {
+    let mut out = s("{")
+    jkey(inout out, "metrics")
+    out.push(91)
+    let ms = metrics(a, b)
+    for i in 0..ms.len() {
+        if i > 0 { out.push(44) }
+        let x = ms[i]
+        out.push(123)
+        jkey(inout out, "name")
+        jstr(inout out, x.name)
+        out.push(44)
+        jint(inout out, "a", x.a)
+        out.push(44)
+        jint(inout out, "b", x.b)
+        out.push(44)
+        jkey(inout out, "gated")
+        if x.gated { bytes.append(inout out, s("true")) } else { bytes.append(inout out, s("false")) }
+        out.push(44)
+        jkey(inout out, "regressed")
+        if regressed(x, tol_pct) { bytes.append(inout out, s("true")) } else { bytes.append(inout out, s("false")) }
+        out.push(125)
+    }
+    out.push(93)
+    out.push(125)
+    out.push(10)
+    out
+}
+
+/// Whether any gated metric regressed.
+pub fn any_regression(a: m.Profile, b: m.Profile, tol_pct: i64) -> bool {
+    for x in metrics(a, b) {
+        if regressed(x, tol_pct) { return true }
+    }
+    false
+}

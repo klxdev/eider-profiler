@@ -1,0 +1,34 @@
+// A copy-on-write-heavy benchmark: snapshots of a List of Strings are kept while the
+// original is changed, so every change to a shared List copies it (`touch` is the hot spot),
+// and `clone_all` copies with .copy() in a loop.
+fn make(n: i64) -> List[String] {
+    let mut l: List[String] = List.new()
+    for i in 0..n { l.push(String.from_int(i)) }
+    l
+}
+
+fn touch(xs: List[String], rounds: i64) -> List[List[String]] {
+    let mut cur = xs.copy()
+    let mut snaps: List[List[String]] = List.new()
+    for r in 0..rounds {
+        snaps.push(cur.copy())
+        cur[(r % 2000) as usize] = String.from("changed")
+    }
+    snaps
+}
+
+fn clone_all(xs: List[String], k: i64) -> i64 {
+    let mut t: i64 = 0
+    for i in 0..k {
+        let c = xs.copy()
+        t += c.len() as i64
+    }
+    t
+}
+
+fn main() uses io {
+    let base = make(2000)
+    let s = touch(base, 3000)
+    print(s.len())
+    print(clone_all(base, 1000))
+}
