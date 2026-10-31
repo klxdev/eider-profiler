@@ -3,7 +3,7 @@
 The profiler has two halves. The **recording** half is in eider-lang: `eiderc build|run|test
 --profile[=cpu,mem,conc]` compiles the program with a shadow stack and event hooks and links
 the runtime's profiling part (core/eider_prof.c), which samples, counts and writes the profile
-file; `std/profile` and packages/http's `http/profiling` control it from inside the program.
+file; `std/profile` and eider-http's `http/profiling` control it from inside the program.
 Its contract is eider-lang `docs/runtime.md`, "Profiler" (what is recorded, the environment
 variables, the file format, the overhead) and `core/RUNTIME.md`, "Profiling". The **reading**
 half is this repository: everything that turns a profile into something a person or a CI job
@@ -21,7 +21,7 @@ like any other program. The file is the interface, so it is versioned and docume
 ## The file, as this tool reads it
 
 JSON lines, format version 1 (eider-lang `docs/runtime.md`, "Profile format"). `prof_model.ei`
-reads every line with packages/json, keeps the records it knows and ignores the others, so a
+reads every line with eider-json, keeps the records it knows and ignores the others, so a
 newer runtime that adds a record kind or a field still reads; a header with a higher
 `eider_prof` is refused with a message.
 
@@ -84,7 +84,7 @@ yourself and capture on demand (SIGUSR2, `std/profile.snapshot`, or `/debug/prof
 ## The load generator
 
 `eider-loadgen` (loadgen.ei) exists so a service can be profiled under load with nothing but
-Eider: N threads, each with one keep-alive connection from packages/http's client, sending a
+Eider: N threads, each with one keep-alive connection from eider-http's client, sending a
 mix of requests (`--req "METHOD PATH [BODY]"`, `{n}` a key from `--keys`, `{t}` the thread)
 for `--seconds` or `--requests`, then one line with the count, errors, non-2xx answers,
 throughput and latency percentiles.
@@ -96,5 +96,5 @@ labels, diff and `--check` exit codes, a future format version); real programs r
 `record` whose reports must show their designed hot spots (a CPU-bound function and labels,
 copy-on-write and `.copy()` in a loop, a contended Mutex); the flame graph page's script run
 in node against a DOM stub; determinism of the gated counts (one program recorded twice
-passes `--check` at 0%); and examples/kvstore under eider-loadgen, split by route and by
+passes `--check` at 0%); and eider-rpc's examples/kvstore under eider-loadgen, split by route and by
 JSON-RPC method, with live `/debug/profile` and `/debug/heap` captures.

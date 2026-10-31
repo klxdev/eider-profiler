@@ -75,18 +75,19 @@ Build the service with `--profile`, then any of:
 
 - **at exit**: stop it (SIGTERM, Ctrl-C): `eider.prof` (or `$EIDER_PROF`) is written.
 - **SIGUSR2**: `kill -USR2 <pid>` writes the profile so far, and the service goes on.
-- **over HTTP**, opt-in: packages/http's `profiling.mount(inout router, opts)` with
+- **over HTTP**, opt-in: eider-http's `profiling.mount(inout router, opts)` with
   `opts.enabled = true` adds `GET /debug/profile?seconds=N` (a fresh N-second recording) and
   `GET /debug/heap` (the live heap now). Local host only unless `opts.remote`.
 - **labels**: `profiling.label_routes(inout router)` labels every request with `method` and
   `route` (the pattern); `jsonrpc` adds `rpc` (the method). `report --by route` and
   `flame --label route=/kv/:key` split by them. In code: `profile.with_label("job", "resize", || ...)`.
 
-examples/kvstore does all of it (`KVSTORE_PROFILING=1` turns the endpoints on). With the load
+eider-rpc's examples/kvstore does all of it (`KVSTORE_PROFILING=1` turns the endpoints on). With the load
 generator in this repository:
 
 ```sh
-EIDER_CACHE=off $EIDER_LANG/target/eiderc-next build $EIDER_LANG/examples/kvstore/main.ei --profile -o kvstore
+(cd ../eider-rpc && sh scripts/build.sh)           # fetches examples/kvstore's dependencies
+EIDER_CACHE=off target/eiderc build ../eider-rpc/examples/kvstore/main.ei --profile -o kvstore
 KVSTORE_PROFILING=1 EIDER_PROF=kv.prof ./kvstore 18431 &
 target/bin/eider-loadgen --port 18431 --threads 8 --seconds 4 --keys 500 \
   --req 'POST /rpc {"jsonrpc":"2.0","method":"kv.put","params":["k{n}","v{n}"],"id":1}' \
@@ -118,9 +119,17 @@ very many tiny calls) runs 44% longer; with everything on, 37% and 72%. Leave
 | `prof_report.ei` | `report` (text and JSON) and `diff` |
 | `prof_flame.ei` | `folded` and the flame graph page |
 | `prof_text.ei` | tables, sizes, durations, percentages |
-| `loadgen.ei` | eider-loadgen, an HTTP load generator on packages/http's client |
+| `loadgen.ei` | eider-loadgen, an HTTP load generator on eider-http's client |
 | `tests/run.sh` | profiles real programs and checks that the reports show their hot spots |
 | `docs/profiler.md` | the design and the file format |
 
 Build needs the eider-lang checkout ($EIDER_LANG, default `../eider-lang`) with a compiler that
 knows `--profile`; `scripts/build.sh` builds `target/eiderc` from it.
+
+The dependencies are [eider-json](https://github.com/klxdev/eider-json) and
+[eider-http](https://github.com/klxdev/eider-http) 0.1.0, git packages. `scripts/build.sh`
+fetches them offline through eider-pkg's `EIDER_PKG_OVERRIDE` (a local checkout standing in
+for the repository): `$EIDER_JSON` / `$EIDER_HTTP`, else `../eider-json` and `../eider-http`,
+else (json) the toolchain's pinned `vendor/json`. The kvstore load test of `tests/run.sh`
+builds eider-rpc's examples/kvstore from its checkout (`$EIDER_RPC`, default `../eider-rpc`)
+and is skipped without one.

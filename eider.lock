@@ -2,22 +2,17 @@
 version = 1
 
 [[package]]
-name = "fuzz"
-version = "0.1.0"
-source = "path+../eider-lang/packages/fuzz"
-deps = []
-grants = []
-
-[[package]]
 name = "http"
 version = "0.1.0"
-source = "path+../eider-lang/packages/http"
-deps = ["json", "fuzz"]
+source = "git+https://github.com/klxdev/eider-http.git#a4609cf78590992a395fde04e5bf3a865b7b4289"
+hash = "sha256-2cc0c27af56681130d455c6cf4b9667a46ff17f395ca2e512952448901e2f54e"
+deps = ["json"]
 grants = ["net", "io", "clock", "threads"]
 
 [[package]]
 name = "json"
 version = "0.1.0"
-source = "path+../eider-lang/packages/json"
+source = "git+https://github.com/klxdev/eider-json.git#7233c1f77b4426fe5ae5d9c62ac0b3f77f0d37f4"
+hash = "sha256-e67bad5434344a9e1d737e08aaa030506b05f18cdc7a04571c60850f6b10f863"
 deps = []
 grants = []

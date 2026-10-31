@@ -3,7 +3,7 @@
 //   eider-loadgen --port P [--host 127.0.0.1] [--threads 8] [--seconds 5 | --requests N]
 //                 [--keys 1000] --req "METHOD PATH [BODY]" [--req ...]
 //
-// Each thread keeps one connection (packages/http's client, keep-alive; it reconnects after
+// Each thread keeps one connection (eider-http's client, keep-alive; it reconnects after
 // an error) and sends the requests in turn until the time or the request count is up. In a
 // PATH or BODY, `{n}` is the request number modulo --keys and `{t}` the thread number, so a
 // mix can write and read a working set of keys. At the end it prints one line:

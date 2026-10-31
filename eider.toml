@@ -8,10 +8,14 @@ description = "eider-profiler: reports, flame graphs, folded stacks and diffs of
 
 # Grants are what each package's code uses, as the compiler reports it (`eiderc caps`) and
 # checks when it builds (E0204): json uses nothing, so it is granted nothing.
+# Both are git packages; scripts/build.sh takes them from local checkouts when it can
+# (EIDER_PKG_OVERRIDE: ../eider-json and ../eider-http, json else the toolchain's vendor/json).
 [deps.json]
-path = "../eider-lang/packages/json"
+git = "https://github.com/klxdev/eider-json.git"
+version = "0.1.0"
 
 # the load generator (loadgen.ei) is an HTTP client: sockets, deadlines, worker threads
 [deps.http]
-path = "../eider-lang/packages/http"
+git = "https://github.com/klxdev/eider-http.git"
+version = "0.1.0"
 uses = ["net", "io", "clock", "threads"]

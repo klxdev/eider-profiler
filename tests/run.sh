@@ -14,11 +14,12 @@
 #    and .copy() in `touch`), mutex.ei (lock waits in `bump`); every flame graph page is
 #    self-contained and its script runs (node, when installed); a profile diffed with itself
 #    passes --check, and one with more allocations fails it.
-# 3. examples/kvstore built with --profile under eider-loadgen: the report has the routes and
+# 3. eider-rpc's examples/kvstore (the checkout $EIDER_RPC, default ../eider-rpc; skipped
+#    without one) built with --profile under eider-loadgen: the report has the routes and
 #    JSON-RPC methods as labels, and /debug/profile and /debug/heap answer a profile.
 cd "$(dirname "$0")/.." || exit 1
 root=$(pwd)
-toolchain=$(cd "${EIDER_LANG:-$root/../eider-lang}" && pwd -P)
+toolchain=$(cd "${EIDER_ROOT:-${EIDER_LANG:-$root/../eider-lang}}" && pwd -P)
 if [ -z "$NOBUILD" ]; then
   EIDER_LANG=$toolchain sh scripts/build.sh >/dev/null || { echo "FAIL build"; exit 1; }
 fi
@@ -100,11 +101,31 @@ has "$T/mutex.out" '^960$' "mutex: the program's own output"
 "$E" diff "$T/cow_bench.prof" "$T/cow_bench2.prof" --check > "$T/d1" && ok "diff --check: the same program recorded twice" || { bad "diff --check: the same program recorded twice"; grep REGRESSION "$T/d1"; }
 if "$E" diff "$T/cpu.prof" "$T/cow_bench.prof" --check > "$T/d3"; then bad "diff --check: more allocations fail"; else has "$T/d3" '^REGRESSION allocations: ' "diff --check: more allocations fail"; fi
 
-# 3. kvstore under load
+# 3. kvstore under load: eider-rpc's example, on a copy of its checkout, whose eider.lock is
+# fetched there with http and json from their checkouts (as scripts/build.sh takes them)
+rpc=${EIDER_RPC:-$root/../eider-rpc}
+kv_fetch() {
+  mkdir -p "$T/rpc"
+  (cd "$rpc" && find . -path ./target -prune -o -path ./.git -prune -o -type f -print) |
+    while read -r f; do mkdir -p "$T/rpc/$(dirname "$f")"; cp "$rpc/$f" "$T/rpc/$f"; done
+  ov=$EIDER_PKG_OVERRIDE
+  for dep in json http; do
+    case ",$ov," in *",$dep="*) continue ;; esac
+    eval "dir=\${EIDER_$(echo "$dep" | tr 'a-z' 'A-Z'):-}"
+    [ -n "$dir" ] || { [ -f "$root/../eider-$dep/eider.toml" ] && dir=$root/../eider-$dep; }
+    [ -n "$dir" ] || { [ -f "$toolchain/vendor/$dep/eider.toml" ] && dir=$toolchain/vendor/$dep; }
+    [ -z "$dir" ] || ov="${ov:+$ov,}$dep=$(cd "$dir" && pwd -P)"
+  done
+  EIDER_PKG_OVERRIDE=$ov "$toolchain/scripts/eider-pkg" -C "$T/rpc/examples/kvstore" fetch
+}
 if [ -n "$NOLOAD" ]; then
   echo "skip kvstore load test (NOLOAD)"
-elif ! "$EIDERC" build "$toolchain/examples/kvstore/main.ei" --profile -o "$T/kvstore" > "$T/kv.build" 2>&1; then
-  bad "build examples/kvstore with --profile"; cat "$T/kv.build"
+elif [ ! -f "$rpc/examples/kvstore/main.ei" ]; then
+  echo "skip kvstore load test: no eider-rpc checkout at $rpc (set EIDER_RPC)"
+elif ! kv_fetch > "$T/kv.build" 2>&1; then
+  bad "fetch eider-rpc's examples/kvstore"; cat "$T/kv.build"
+elif ! "$EIDERC" build "$T/rpc/examples/kvstore/main.ei" --profile -o "$T/kvstore" > "$T/kv.build" 2>&1; then
+  bad "build eider-rpc's examples/kvstore with --profile"; cat "$T/kv.build"
 else
   port=$((20000 + $$ % 20000))
   KVSTORE_PROFILING=1 EIDER_PROF="$T/kv.prof" "$T/kvstore" $port > "$T/kv.log" 2>&1 &

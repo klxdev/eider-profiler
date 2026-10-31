@@ -18,5 +18,8 @@ First release, with eider-lang 0.1 (`eiderc build|run|test --profile`, profile f
 - `diff`: totals, functions and sites compared; `--check [--tolerance PCT]` gates the
   deterministic counts.
 - `record -- prog.ei args`: build with `--profile`, run, write the profile.
-- `eider-loadgen`: an HTTP load generator on packages/http's client.
+- `eider-loadgen`: an HTTP load generator on eider-http's client.
+- Dependencies: eider-json and eider-http 0.1.0 as git packages (eider-lang keeps only the
+  language and its tooling, U19), fetched offline from sibling checkouts or the toolchain's
+  vendor/json (`EIDER_PKG_OVERRIDE`); the load test uses eider-rpc's examples/kvstore.
 - `--version`.
