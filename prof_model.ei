@@ -6,13 +6,13 @@
 // ignored, so a newer runtime's file still reads (the header's `eider_prof` is the format
 // version; a higher one is refused).
 
-import "core/sys"
-import "std/bytes"
-import "json"
+import core.sys
+import std.bytes
+import json
 
 pub const FORMAT: i64 = 1
 /// this tool's version (VERSION; the same major.minor as the toolchain it goes with)
-pub const TOOL_VERSION: str = "0.1.0"
+pub const TOOL_VERSION: str = "0.1.1"
 /// the fn id of the frame that marks a stack cut short (deeper than the runtime keeps)
 pub const TRUNC: u32 = 4294967295
 

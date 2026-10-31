@@ -1,6 +1,6 @@
 [package]
 name = "eider_profiler"
-version = "0.1.0"
+version = "0.1.1"
 # the Eider toolchain this release goes with: same major.minor (scripts/build.sh checks it)
 eider = "0.1"
 main = "main.ei"

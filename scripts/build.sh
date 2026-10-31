@@ -9,8 +9,8 @@
 # (EIDER_PKG_OVERRIDE, eider-lang's docs/site/tooling/eider-pkg.md): $EIDER_JSON / $EIDER_HTTP,
 # else the checkouts ../eider-json and ../eider-http, else (json) the toolchain's pinned
 # release vendor/json; one with none of these is fetched from GitHub. The sources import
-# them by package name (`import "json"`, `import "http/client"`), which the compiler
-# resolves through eider.lock. Package imports, and `--profile` for `eider-profiler record`,
+# them by package name (`import json`, `import http.client`), which the compiler
+# resolves through eider.lock. Dotted imports, and `--profile` for `eider-profiler record`,
 # need an eiderc newer than eider-lang's seed, so this builds target/eiderc from the
 # checkout's compiler/ with its scripts/ei (only a C11 compiler: $CC, default cc) when that is
 # missing or older than compiler/, std/ or core/. target/core and target/std link the

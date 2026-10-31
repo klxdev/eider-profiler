@@ -1,12 +1,12 @@
 // prof_report: what a profile says, as tables (`report`), as JSON (`report --json`), and
 // against another profile (`diff`).
 
-import "core/sys"
-import "std/bytes"
-import "std/sort"
-import "json"
-import "prof_model.ei" as m
-import "prof_text.ei" as tx
+import core.sys
+import std.bytes
+import std.sort
+import json
+import eider_profiler.prof_model as m
+import eider_profiler.prof_text as tx
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }

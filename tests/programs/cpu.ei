@@ -1,6 +1,6 @@
 // CPU: `hot` takes about five times the time of `warm`; both are called from `run`, under
 // the labels phase=hot and phase=warm.
-import "std/profile"
+import std.profile
 
 fn hot(n: i64) -> i64 {
     let mut s: i64 = 0

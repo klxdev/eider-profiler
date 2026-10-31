@@ -1,7 +1,7 @@
 // prof_text: numbers and tables as text.
 
-import "core/sys"
-import "std/bytes"
+import core.sys
+import std.bytes
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 
