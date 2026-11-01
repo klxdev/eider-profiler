@@ -9,7 +9,7 @@ description = "eider-profiler: reports, flame graphs, folded stacks and diffs of
 # Grants are what each package's code uses, as the compiler reports it (`eiderc caps`) and
 # checks when it builds (E0204): json uses nothing, so it is granted nothing.
 # Both are git packages; scripts/build.sh takes them from local checkouts when it can
-# (EIDER_PKG_OVERRIDE: ../eider-json and ../eider-http, json else the toolchain's vendor/json).
+# (EIDER_PKG_OVERRIDE: ../eider-json and ../eider-http, json else the toolchain's .vendor/json).
 [deps.json]
 git = "https://github.com/klxdev/eider-json.git"
 version = "0.1.1"

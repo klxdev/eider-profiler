@@ -127,9 +127,10 @@ Build needs the eider-lang checkout ($EIDER_LANG, default `../eider-lang`) with 
 knows `--profile`; `scripts/build.sh` builds `target/eiderc` from it.
 
 The dependencies are [eider-json](https://github.com/klxdev/eider-json) and
-[eider-http](https://github.com/klxdev/eider-http) 0.1.0, git packages. `scripts/build.sh`
+[eider-http](https://github.com/klxdev/eider-http) 0.1.1, git packages. `scripts/build.sh`
 fetches them offline through eider-pkg's `EIDER_PKG_OVERRIDE` (a local checkout standing in
 for the repository): `$EIDER_JSON` / `$EIDER_HTTP`, else `../eider-json` and `../eider-http`,
-else (json) the toolchain's pinned `vendor/json`. The kvstore load test of `tests/run.sh`
+else (json) the toolchain's pinned `.vendor/json` (fetched and hash-checked by its
+`scripts/vendor.sh fetch json`). The kvstore load test of `tests/run.sh`
 builds eider-rpc's examples/kvstore from its checkout (`$EIDER_RPC`, default `../eider-rpc`)
 and is skipped without one.

@@ -113,6 +113,7 @@ kv_fetch() {
     case ",$ov," in *",$dep="*) continue ;; esac
     eval "dir=\${EIDER_$(echo "$dep" | tr 'a-z' 'A-Z'):-}"
     [ -n "$dir" ] || { [ -f "$root/../eider-$dep/eider.toml" ] && dir=$root/../eider-$dep; }
+    if [ -z "$dir" ] && [ "$dep" = json ] && [ -f "$toolchain/vendor.lock" ]; then sh "$toolchain/scripts/vendor.sh" fetch json >&2 && dir=$toolchain/.vendor/json; fi
     [ -n "$dir" ] || { [ -f "$toolchain/vendor/$dep/eider.toml" ] && dir=$toolchain/vendor/$dep; }
     [ -z "$dir" ] || ov="${ov:+$ov,}$dep=$(cd "$dir" && pwd -P)"
   done

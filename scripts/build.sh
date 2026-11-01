@@ -8,7 +8,8 @@
 # packages (eider.toml); offline, eider-pkg takes each from a local directory
 # (EIDER_PKG_OVERRIDE, eider-lang's docs/site/tooling/eider-pkg.md): $EIDER_JSON / $EIDER_HTTP,
 # else the checkouts ../eider-json and ../eider-http, else (json) the toolchain's pinned
-# release vendor/json; one with none of these is fetched from GitHub. The sources import
+# release .vendor/json (fetched there with its scripts/vendor.sh; vendor/json in a toolchain
+# from before eider-lang #122); one with none of these is fetched from GitHub. The sources import
 # them by package name (`import json`, `import http.client`), which the compiler
 # resolves through eider.lock. Dotted imports, and `--profile` for `eider-profiler record`,
 # need an eiderc newer than eider-lang's seed, so this builds target/eiderc from the
@@ -32,6 +33,7 @@ for dep in json http; do
   case ",$EIDER_PKG_OVERRIDE," in *",$dep="*) continue ;; esac
   eval "dir=\${EIDER_$(echo "$dep" | tr 'a-z' 'A-Z'):-}"
   [ -n "$dir" ] || { [ -f "$here/../eider-$dep/eider.toml" ] && dir=$here/../eider-$dep; }
+  if [ -z "$dir" ] && [ "$dep" = json ] && [ -f "$toolchain/vendor.lock" ]; then sh "$toolchain/scripts/vendor.sh" fetch json >&2 && dir=$toolchain/.vendor/json; fi
   [ -n "$dir" ] || { [ -f "$toolchain/vendor/$dep/eider.toml" ] && dir=$toolchain/vendor/$dep; }
   [ -z "$dir" ] || EIDER_PKG_OVERRIDE="${EIDER_PKG_OVERRIDE:+$EIDER_PKG_OVERRIDE,}$dep=$(cd "$dir" && pwd -P)"
 done
