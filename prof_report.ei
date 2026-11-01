@@ -473,7 +473,7 @@ fn jsites(inout o: List[u8], p: m.Profile, xs: List[m.Site], top: usize, live: b
 
 /// The report as one JSON object (README.md "JSON output").
 pub fn as_json(p: m.Profile, o: Opts) -> List[u8] {
-    let mut out = s("{")
+    let mut out = s(r"{")
     jkey(inout out, "program")
     jstr(inout out, p.program)
     out.push(44)
@@ -741,7 +741,7 @@ pub fn diff_text(a: m.Profile, b: m.Profile, o: Opts, check: bool, tol_pct: i64)
 
 /// `diff --json`: the totals as one JSON object.
 pub fn diff_json(a: m.Profile, b: m.Profile, tol_pct: i64) -> List[u8] {
-    let mut out = s("{")
+    let mut out = s(r"{")
     jkey(inout out, "metrics")
     out.push(91)
     let ms = metrics(a, b)

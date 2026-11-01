@@ -93,7 +93,7 @@ fn load(path: List[u8]) -> m.Profile uses io, fs {
             bytes.append(inout msg, s(": "))
             bytes.append(inout msg, e)
             die(msg, 2)
-            m.parse(s("{\"eider_prof\":1}")).unwrap()
+            m.parse(s("{{\"eider_prof\":1}}")).unwrap()
         }
     }
 }
