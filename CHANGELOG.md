@@ -5,6 +5,13 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
+## 0.2.0
+
+For Eider 0.2 (`eider = "0.2"`): eider-lang's 0.2 builds programs only through LLVM (clang
+17 or newer; U23) and bootstraps the compiler from a WebAssembly seed (seed/eiderc.wasm; U24).
+scripts/env.sh recognises such a checkout (seed/eiderc.wasm, or seed/eiderc.c before).
+Nothing else changed.
+
 ## 0.1.2
 
 Builds and tests with the toolchain `eider` picks (eider-lang#133) instead of a fixed

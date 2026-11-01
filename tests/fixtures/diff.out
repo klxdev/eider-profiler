@@ -1,4 +1,4 @@
-eider-profiler: warning: tests/fixtures/small2.prof was written by Eider 0.2.0, this eider-profiler goes with Eider 0.1.x
+eider-profiler: warning: tests/fixtures/small2.prof was written by Eider 0.1.0, this eider-profiler goes with Eider 0.2.x
 eider-profiler diff: svc.ei -> svc.ei
 
 Totals (gated: deterministic counts that `diff --check` fails on)

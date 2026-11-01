@@ -26,7 +26,7 @@ fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
 fn usage() -> List[u8] {
     let mut t: List[u8] = List.new()
     for l in [
-        "eider-profiler 0.1.2: profiles of Eider programs (built with `eiderc build|run --profile`)",
+        "eider-profiler 0.2.0: profiles of Eider programs (built with `eiderc build|run --profile`)",
         "  eider-profiler --version                     the version (it goes with Eider of the same major.minor)",
         "",
         "usage:",

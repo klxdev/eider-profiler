@@ -1,8 +1,8 @@
 [package]
 name = "eider_profiler"
-version = "0.1.2"
+version = "0.2.0"
 # the Eider toolchain this release goes with: same major.minor (scripts/build.sh checks it)
-eider = "0.1"
+eider = "0.2"
 main = "main.ei"
 description = "eider-profiler: reports, flame graphs, folded stacks and diffs of Eider programs' profiles, written in Eider"
 
@@ -12,10 +12,10 @@ description = "eider-profiler: reports, flame graphs, folded stacks and diffs of
 # (EIDER_PKG_OVERRIDE: ../eider-json and ../eider-http, json else the toolchain's .vendor/json).
 [deps.json]
 git = "https://github.com/klxdev/eider-json.git"
-version = "0.1.1"
+version = "0.2.0"
 
 # the load generator (loadgen.ei) is an HTTP client: sockets, deadlines, worker threads
 [deps.http]
 git = "https://github.com/klxdev/eider-http.git"
-version = "0.1.1"
+version = "0.2.0"
 uses = ["net", "io", "clock", "threads"]

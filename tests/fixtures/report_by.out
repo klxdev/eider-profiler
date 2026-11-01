@@ -1,4 +1,4 @@
-eider-profiler report: svc.ei (Eider 0.1.0, written at exit, 2.5 s recorded; profiled: cpu,mem,conc; clock cpu at 100 Hz)
+eider-profiler report: svc.ei (Eider 0.2.0, written at exit, 2.5 s recorded; profiled: cpu,mem,conc; clock cpu at 100 Hz)
 samples: 150 (+2 dropped) = 1.5 s of cpu time; threads: 5 started, 4 exited
 only stacks labelled method=GET
 

@@ -12,7 +12,7 @@ import json
 
 pub const FORMAT: i64 = 1
 /// this tool's version (VERSION; the same major.minor as the toolchain it goes with)
-pub const TOOL_VERSION: str = "0.1.2"
+pub const TOOL_VERSION: str = "0.2.0"
 /// the fn id of the frame that marks a stack cut short (deeper than the runtime keeps)
 pub const TRUNC: u32 = 4294967295
 

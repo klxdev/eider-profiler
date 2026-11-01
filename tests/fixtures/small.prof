@@ -1,4 +1,4 @@
-{"eider_prof":1,"program":"svc.ei","version":"0.1.0","pid":42,"reason":"exit","what":"cpu,mem,conc","clock":"cpu","hz":100,"period_ns":10000000,"mem_rate":524288,"duration_ns":2500000000,"running":false,"clean_exit":true}
+{"eider_prof":1,"program":"svc.ei","version":"0.2.0","pid":42,"reason":"exit","what":"cpu,mem,conc","clock":"cpu","hz":100,"period_ns":10000000,"mem_rate":524288,"duration_ns":2500000000,"running":false,"clean_exit":true}
 {"t":"file","id":0,"path":"svc.ei"}
 {"t":"file","id":1,"path":"std/bytes.ei"}
 {"t":"file","id":2,"path":"http/router.ei"}
