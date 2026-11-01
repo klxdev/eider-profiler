@@ -30,7 +30,8 @@ elif command -v eider >/dev/null 2>&1; then
 else
   die "no Eider toolchain: no \`eider\` on the PATH and no EIDER_TOOLCHAIN; install eider (gh release download --repo klxdev/eider-lang --pattern install.sh && sh install.sh --toolchain; eider-lang's docs/site/tooling/eider.md), or set EIDER_TOOLCHAIN to an Eider toolchain or an eider-lang checkout"
 fi
-if [ -x "$toolchain/scripts/ei" ] && [ -f "$toolchain/seed/eiderc.c" ]; then
+# a checkout: its seed is seed/eiderc.wasm since eider-lang 0.2 (seed/eiderc.c before)
+if [ -x "$toolchain/scripts/ei" ] && { [ -f "$toolchain/seed/eiderc.wasm" ] || [ -f "$toolchain/seed/eiderc.c" ]; }; then
   tc_eiderc=$toolchain/scripts/ei; tc_pkg=$toolchain/scripts/eider-pkg
 elif [ -x "$toolchain/bin/eiderc" ]; then
   tc_eiderc=$toolchain/bin/eiderc; tc_pkg=$toolchain/bin/eider-pkg
