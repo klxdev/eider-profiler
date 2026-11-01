@@ -14,8 +14,8 @@ tests/programs.
 
 Needs an Eider 0.1 toolchain whose compiler knows dotted imports (the eider-lang commit after
 the next seed). scripts/build.sh builds target/eiderc from the checkout's compiler/, so a
-checkout whose compiler/ knows them is enough even before that seed. eider.lock still pins
-eider-json and eider-http at their tagged v0.1.0 releases.
+checkout whose compiler/ knows them is enough even before that seed. eider.toml requires, and
+eider.lock pins, eider-json and eider-http at their tagged v0.1.1 releases.
 
 ## 0.1.0
 

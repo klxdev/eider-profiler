@@ -12,10 +12,10 @@ description = "eider-profiler: reports, flame graphs, folded stacks and diffs of
 # (EIDER_PKG_OVERRIDE: ../eider-json and ../eider-http, json else the toolchain's vendor/json).
 [deps.json]
 git = "https://github.com/klxdev/eider-json.git"
-version = "0.1.0"
+version = "0.1.1"
 
 # the load generator (loadgen.ei) is an HTTP client: sockets, deadlines, worker threads
 [deps.http]
 git = "https://github.com/klxdev/eider-http.git"
-version = "0.1.0"
+version = "0.1.1"
 uses = ["net", "io", "clock", "threads"]
