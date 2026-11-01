@@ -19,19 +19,18 @@
 #    JSON-RPC methods as labels, and /debug/profile and /debug/heap answer a profile.
 cd "$(dirname "$0")/.." || exit 1
 root=$(pwd)
-toolchain=$(cd "${EIDER_ROOT:-${EIDER_LANG:-$root/../eider-lang}}" && pwd -P)
 if [ -z "$NOBUILD" ]; then
-  EIDER_LANG=$toolchain sh scripts/build.sh >/dev/null || { echo "FAIL build"; exit 1; }
+  sh scripts/build.sh >/dev/null || { echo "FAIL build"; exit 1; }
 fi
+# the toolchain (scripts/env.sh: EIDER_TOOLCHAIN, else the one `eider` picks), exported with
+# EIDER_ROOT and EIDERC, its compiler, which `record` builds with
+here=$root
+. scripts/env.sh
 E=$root/target/bin/eider-profiler
 L=$root/target/bin/eider-loadgen
 T=$root/target/tests
 rm -rf "$T"
 mkdir -p "$T"
-EIDERC=$root/target/eiderc
-export EIDERC
-EIDER_ROOT=$toolchain
-export EIDER_ROOT
 EIDER_CACHE=off
 export EIDER_CACHE
 fail=0
@@ -116,7 +115,7 @@ kv_fetch() {
     if [ -z "$dir" ] && [ "$dep" = json ] && [ -f "$toolchain/vendor.lock" ]; then sh "$toolchain/scripts/vendor.sh" fetch json >&2 && dir=$toolchain/.vendor/json; fi
     [ -z "$dir" ] || ov="${ov:+$ov,}$dep=$(cd "$dir" && pwd -P)"
   done
-  EIDER_PKG_OVERRIDE=$ov "$toolchain/scripts/eider-pkg" -C "$T/rpc/examples/kvstore" fetch
+  (EIDER_PKG_OVERRIDE=$ov; export EIDER_PKG_OVERRIDE; eider_pkg -C "$T/rpc/examples/kvstore" fetch)
 }
 if [ -n "$NOLOAD" ]; then
   echo "skip kvstore load test (NOLOAD)"
@@ -124,7 +123,7 @@ elif [ ! -f "$rpc/examples/kvstore/main.ei" ]; then
   echo "skip kvstore load test: no eider-rpc checkout at $rpc (set EIDER_RPC)"
 elif ! kv_fetch > "$T/kv.build" 2>&1; then
   bad "fetch eider-rpc's examples/kvstore"; cat "$T/kv.build"
-elif ! "$EIDERC" build "$T/rpc/examples/kvstore/main.ei" --profile -o "$T/kvstore" > "$T/kv.build" 2>&1; then
+elif ! ei build "$T/rpc/examples/kvstore/main.ei" --profile -o "$T/kvstore" > "$T/kv.build" 2>&1; then
   bad "build eider-rpc's examples/kvstore with --profile"; cat "$T/kv.build"
 else
   port=$((20000 + $$ % 20000))

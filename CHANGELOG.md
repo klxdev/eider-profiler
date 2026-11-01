@@ -5,6 +5,18 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
+## 0.1.2
+
+Builds and tests with the toolchain `eider` picks (eider-lang#133) instead of a fixed
+eider-lang checkout. scripts/env.sh (sourced by scripts/build.sh and tests/run.sh) takes
+`$EIDER_TOOLCHAIN` (a toolchain directory or an eider-lang checkout), else the toolchain
+`eider toolchain show --json` names for `eider = "0.1"`, else stops with exit 2 and says to
+install `eider`. Both binaries are built with that toolchain's compiler (through `eider`, or
+directly when `eider` is not on the PATH) rather than a target/eiderc built from the
+checkout's compiler/main.ei, and tests/run.sh records with it (`EIDERC`). `EIDER_ROOT` and
+`EIDER_LANG` no longer choose the toolchain for the scripts. Tested with the released Eider
+0.1.0 and with eider-lang main. No change to the tool's behaviour.
+
 ## 0.1.1
 
 Imports in the dotted form (eider-lang C8.26, issue #91): `import std.bytes`, `import json`,

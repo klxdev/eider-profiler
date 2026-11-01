@@ -10,7 +10,7 @@ Written in Eider. Two uses are first-class:
   running process, and split per endpoint by labels.
 
 ```sh
-EIDER_LANG=~/workplace/eider-lang sh scripts/build.sh     # target/bin/eider-profiler, eider-loadgen
+sh scripts/build.sh                                      # target/bin/eider-profiler, eider-loadgen
 target/bin/eider-profiler record -- prog.ei args...      # build with --profile, run, write eider.prof
 target/bin/eider-profiler report eider.prof              # tables
 target/bin/eider-profiler flame eider.prof -o flame.html # an interactive flame graph
@@ -87,7 +87,7 @@ generator in this repository:
 
 ```sh
 (cd ../eider-rpc && sh scripts/build.sh)           # fetches examples/kvstore's dependencies
-EIDER_CACHE=off target/eiderc build ../eider-rpc/examples/kvstore/main.ei --profile -o kvstore
+EIDER_CACHE=off eider build ../eider-rpc/examples/kvstore/main.ei --profile -o kvstore
 KVSTORE_PROFILING=1 EIDER_PROF=kv.prof ./kvstore 18431 &
 target/bin/eider-loadgen --port 18431 --threads 8 --seconds 4 --keys 500 \
   --req 'POST /rpc {"jsonrpc":"2.0","method":"kv.put","params":["k{n}","v{n}"],"id":1}' \
@@ -123,14 +123,21 @@ very many tiny calls) runs 44% longer; with everything on, 37% and 72%. Leave
 | `tests/run.sh` | profiles real programs and checks that the reports show their hot spots |
 | `docs/profiler.md` | the design and the file format |
 
-Build needs the eider-lang checkout ($EIDER_LANG, default `../eider-lang`) with a compiler that
-knows `--profile`; `scripts/build.sh` builds `target/eiderc` from it.
+`scripts/build.sh` builds both binaries with the toolchain
+[`eider`](https://github.com/klxdev/eider-lang/blob/main/docs/site/tooling/eider.md) picks
+(`scripts/env.sh`): `$EIDER_TOOLCHAIN` (an installed toolchain's directory, or an eider-lang
+checkout for unreleased work: `EIDER_TOOLCHAIN=../eider-lang sh tests/run.sh`), else the
+installed release for `eider.toml`'s `eider = "0.1"` (`eider toolchain show`). Install
+`eider` and the latest toolchain with eider-lang's `install.sh --toolchain`; without either
+it stops with exit 2 and says so, and also when the toolchain's MAJOR.MINOR is not this
+tool's. eiderc and eider-pkg run through `eider`, or directly when it is not on the PATH.
+`tests/run.sh` records with that toolchain's compiler (`EIDERC`).
 
 The dependencies are [eider-json](https://github.com/klxdev/eider-json) and
 [eider-http](https://github.com/klxdev/eider-http) 0.1.1, git packages. `scripts/build.sh`
 fetches them offline through eider-pkg's `EIDER_PKG_OVERRIDE` (a local checkout standing in
 for the repository): `$EIDER_JSON` / `$EIDER_HTTP`, else `../eider-json` and `../eider-http`,
-else (json) the toolchain's pinned `.vendor/json` (fetched and hash-checked by its
-`scripts/vendor.sh fetch json`). The kvstore load test of `tests/run.sh`
+else (json, when the toolchain is an eider-lang checkout) its pinned `.vendor/json`
+(fetched and hash-checked by its `scripts/vendor.sh fetch json`). The kvstore load test of `tests/run.sh`
 builds eider-rpc's examples/kvstore from its checkout (`$EIDER_RPC`, default `../eider-rpc`)
 and is skipped without one.
