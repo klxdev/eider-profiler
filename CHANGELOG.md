@@ -5,6 +5,13 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
+## 0.3.0
+
+For Eider 0.3 (`eider = "0.3"`): every plain string literal interpolates (eider-lang U29), so
+the literals with braces here are raw strings or have their braces doubled. Requires eider-http and eider-json 0.3.0.
+
+The grant to eider-http adds `fs`: what its modules use (eider-lang #135).
+
 ## 0.2.0
 
 For Eider 0.2 (`eider = "0.2"`): eider-lang's 0.2 builds programs only through LLVM (clang
