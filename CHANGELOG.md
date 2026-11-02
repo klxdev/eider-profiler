@@ -5,6 +5,10 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
+## 0.4.0
+
+For Eider 0.4 (`eider = "0.4"`). Requires eider-http and eider-json 0.4.0; the package version in eider.toml, left at 0.2.0 by the last release, is 0.4.0. Nothing else changed.
+
 ## 0.3.0
 
 For Eider 0.3 (`eider = "0.3"`): every plain string literal interpolates (eider-lang U29), so
