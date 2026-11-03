@@ -271,6 +271,16 @@ fn wait_table(p: m.Profile, xs: List[m.Site], top: usize) -> List[u8] {
 
 fn none_line() -> List[u8] { s("(none)\n") }
 
+/// A titled table of the waits of one kind (nothing when there are none).
+fn wait_section(p: m.Profile, kind: str, title: str, top: usize) -> List[u8] {
+    let ws = sites(p, kind)
+    let mut out: List[u8] = List.new()
+    if ws.len() == 0 { return out }
+    bytes.append(inout out, tx.title(title))
+    bytes.append(inout out, wait_table(p, ws, top))
+    out
+}
+
 /// The text report (see README.md for what each table means).
 pub fn text(p: m.Profile, o: Opts) -> List[u8] {
     let mut out = header(p)
@@ -372,6 +382,23 @@ pub fn text(p: m.Profile, o: Opts) -> List[u8] {
     bytes.append(inout out, tx.title("Channel receive waits (Chan.recv, sync.Lock)"))
     let rv = sites(p, "recv")
     if rv.len() == 0 { bytes.append(inout out, none_line()) } else { bytes.append(inout out, wait_table(p, rv, o.top)) }
+    // tasks (eider-lang 0.6): where they wait, and where they were spawned
+    bytes.append(inout out, wait_section(p, "fd", "Descriptor waits of tasks (where a task waited for a socket, pipe or file)", o.top))
+    bytes.append(inout out, wait_section(p, "sleep", "Timer waits of tasks (sleep)", o.top))
+    bytes.append(inout out, wait_section(p, "park", "Parker waits of tasks (select, Token.wait, Group.wait)", o.top))
+    bytes.append(inout out, wait_section(p, "join", "Task.join waits", o.top))
+    let tk = sites(p, "task")
+    if tk.len() > 0 {
+        bytes.append(inout out, tx.title("Tasks that ended (by the site that spawned them; lifetime = time from spawn to end)"))
+        let mut t = tx.table("> tasks|> lifetime total|> mean|function|at")
+        for i in 0..tk.len() {
+            if i >= o.top { break }
+            let x = tk[i]
+            let mean: i64 = if x.n > 0 { x.w / x.n } else { 0 }
+            t.rows.push(tx.r5(tx.num(x.n), tx.dur(x.w), tx.dur(mean), m.fn_name(p, x.func), m.position(p, x.func, x.line)))
+        }
+        bytes.append(inout out, tx.render(t))
+    }
     let rf = sites_by_n(p, "ref")
     if rf.len() > 0 {
         bytes.append(inout out, tx.title("Ref conflicts (the program trapped)"))
@@ -505,7 +532,7 @@ pub fn as_json(p: m.Profile, o: Opts) -> List[u8] {
     jint(inout out, "live", p.sum.live)
     out.push(44)
     jint(inout out, "threads_started", p.sum.threads_started)
-    for k in ["cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn"] {
+    for k in ["cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn", "fd", "sleep", "park", "join", "task"] {
         let (n, w) = kind_total(p, k)
         out.push(44)
         let mut kn = s(k)
@@ -546,7 +573,7 @@ pub fn as_json(p: m.Profile, o: Opts) -> List[u8] {
         out.push(125)
     }
     out.push(93)
-    for k in ["alloc", "cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn"] {
+    for k in ["alloc", "cow", "copy", "grow", "rehash", "drop", "lock", "recv", "ref", "spawn", "fd", "sleep", "park", "join", "task"] {
         out.push(44)
         let mut kk = s("sites_")
         bytes.append(inout kk, s(k))

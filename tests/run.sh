@@ -94,6 +94,17 @@ sed -n '/^Lock waits/,/^$/p' "$T/mutex.report" | sed -n 4p > "$T/mutex.top"
 has "$T/mutex.top" ' bump +tests/programs/mutex.ei:11$' "mutex: the most waited lock is bump's update"
 has "$T/mutex.report" '^ +8 +main +tests/programs/mutex.ei:20$' "mutex: 8 spawns in main"
 has "$T/mutex.out" '^960$' "mutex: the program's own output"
+# tasks (eider-lang 0.6): twenty tasks that sleep, wait for a descriptor and a channel, and end
+if "$E" record -o "$T/tasks.prof" -- tests/programs/tasks.ei > "$T/tasks.out" 2> "$T/tasks.err"; then
+  "$E" report "$T/tasks.prof" > "$T/tasks.report" || bad "report tasks"
+  has "$T/tasks.out" '^210$' "tasks: the program's own output"
+  has "$T/tasks.report" '^Timer waits of tasks' "tasks: the timer waits have a table"
+  has "$T/tasks.report" '^Descriptor waits of tasks' "tasks: the descriptor waits have a table"
+  has "$T/tasks.report" '^Task.join waits' "tasks: the joins have a table"
+  has "$T/tasks.report" '^ +20 +.* main +tests/programs/tasks.ei:25$' "tasks: 20 tasks ended, counted at the spawn in main"
+else
+  bad "record tasks"; cat "$T/tasks.err"
+fi
 # diff: a profile against itself passes --check (the counts are deterministic: cow_bench
 # recorded twice gives the same ones); cpu against cow_bench (more allocations) fails it
 "$E" record -o "$T/cow_bench2.prof" -- tests/programs/cow_bench.ei > /dev/null 2>&1
