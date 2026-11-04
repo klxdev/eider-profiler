@@ -5,7 +5,9 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
-## Unreleased
+## 0.6.0
+
+For Eider 0.6 (`eider = "0.6"`). Requires eider-http and eider-json 0.6.0.
 
 For tasks (eider-lang 0.6, issue 14): `report` has tables for the descriptor, timer, parker and
 join waits of tasks (sites of the new kinds `fd`, `sleep`, `park`, `join`) and for the tasks that
