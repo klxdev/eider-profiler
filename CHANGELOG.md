@@ -5,6 +5,10 @@ eider-profiler shares its major.minor version with the Eider toolchain (eider-la
 toolchain with another major.minor, and `report` and `diff` warn about a profile written by
 one.
 
+## 0.7.0
+
+For Eider 0.7 (`eider = "0.7"`). Requires eider-http and eider-json 0.7.0. Nothing else changed.
+
 ## 0.6.0
 
 For Eider 0.6 (`eider = "0.6"`). Requires eider-http and eider-json 0.6.0.
