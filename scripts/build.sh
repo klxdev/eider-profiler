@@ -17,7 +17,7 @@
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd -P)
 . "$here/scripts/env.sh"
-for dep in json http; do
+for dep in json http logging; do
   case ",$EIDER_PKG_OVERRIDE," in *",$dep="*) continue ;; esac
   eval "dir=\${EIDER_$(echo "$dep" | tr 'a-z' 'A-Z'):-}"
   [ -n "$dir" ] || { [ -f "$here/../eider-$dep/eider.toml" ] && dir=$here/../eider-$dep; }
